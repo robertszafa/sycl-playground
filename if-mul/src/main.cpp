@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
     // Print out the device information used for the kernel code.
     std::cout << "Running on device: " << q.get_device().get_info<info::device::name>() << "\n";
 
-    const int ARRAY_SIZE = 128;
+    const int ARRAY_SIZE = 1<<20;
 
     // host data
     // inputs

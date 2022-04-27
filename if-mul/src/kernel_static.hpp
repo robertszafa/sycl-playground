@@ -23,8 +23,10 @@ double if_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<float> &
 
     hnd.single_task<class read>([=]() [[intel::kernel_args_restrict]] {
       float etan, t = 0.0;
+      // II=35
       for (int i=0; i < array_size; ++i) {
           if (wet[i] > 0) {
+              // 35 cycles of stall
               t = 0.25 + etan * float(wet[i]) / 2.0;
               etan += t;
           }

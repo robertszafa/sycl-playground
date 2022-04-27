@@ -16,6 +16,7 @@ BIN := bin/if_mul_$(KERNEL)
 all: host
 host: $(BIN)
 fpga_emu: $(BIN).fpga_emu
+fpga_sim: $(BIN).fpga_sim
 fpga: $(BIN).fpga
 report: $(BIN).a 
 
@@ -25,6 +26,9 @@ $(BIN): $(SRC) $(HDR) | bin
 
 $(BIN).fpga_emu: $(SRC) $(HDR) | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ -DFPGA_EMULATOR=1
+
+$(BIN).fpga_sim: $(SRC) $(HDR) | bin
+	$(CXX) $(CXXFLAGS) -fintelfpga -Xssimulation $< -o $@ -DFPGA=1 
 
 # To reuse fpga image add: -reuse-exe=$(BIN).fpga
 # To add profiling info do:  -Xsprofile

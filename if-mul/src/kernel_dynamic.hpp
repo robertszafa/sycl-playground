@@ -19,12 +19,18 @@ double if_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<float> &
   buffer wet_buf(wet);
   buffer B_buf(B);
 
-  // 35 cycles of stall
-  using wet_pipe = pipe<class wet_pipe_class, int, 35>;
-  using wet_pipe_2 = pipe<class wet_pipe_2_class, int, 35>;
-  using wet_predicate_pipe = pipe<class wet_predicate_pipe_class, bool, 35>;
-  using wet_predicate_pipe_2 = pipe<class wet_predicate_pipe_2_class, bool, 35>;
+  // TODO: pipe depths will need to be determined automatically.
+  constexpr unsigned int pipe_depth = 2;
+  using wet_pipe = pipe<class wet_pipe_class, int, pipe_depth>;
+  using wet_pipe_2 = pipe<class wet_pipe_2_class, int, pipe_depth>;
+  using wet_predicate_pipe = pipe<class wet_predicate_pipe_class, bool, pipe_depth>;
+  using wet_predicate_pipe_2 = pipe<class wet_predicate_pipe_2_class, bool, pipe_depth>;
 
+  /*
+  The function is broken down into 3 kernels, 
+  communicating via elastic buffers (pipes).
+  TODO: do this automatically at the LLVM/SPIR-V level.
+  */
 
   auto event = q.submit([&](handler &hnd) {
     accessor wet(wet_buf, hnd, read_only);
@@ -53,6 +59,8 @@ double if_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<float> &
         // else sink
       } 
 
+      // Sends a "stop" signal to the FU that does the computation.
+      // This is needed because we're using an "eta" node from PSSA.
       wet_predicate_pipe_2::write(false);
     });
   });
@@ -62,6 +70,9 @@ double if_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<float> &
 
     hnd.single_task<class comp>([=]() [[intel::kernel_args_restrict]] {
       float etan, t = 0.0;
+      // This is more of an "eta" node from predicated SSA.
+      // An "eta" node fires once for every "true" predicate, 
+      // and stops altogether once a "false" predicate is encountered.
       while (wet_predicate_pipe_2::read()) {
         int wet = wet_pipe_2::read();
         t = 0.25 + etan * float(wet) / 2.0;
