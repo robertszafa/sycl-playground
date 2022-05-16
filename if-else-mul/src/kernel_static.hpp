@@ -11,7 +11,7 @@
 
 using namespace sycl;
 
-double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<float> &B,
+double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<double> &B,
                           const int array_size) {
   std::cout << "Static HLS\n";
 
@@ -23,12 +23,12 @@ double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<flo
     accessor B(B_buf, hnd, write_only);
 
     hnd.single_task<class read>([=]() [[intel::kernel_args_restrict]] {
-      float etan, t = 0.0;
+      double etan, t = 0.0;
       // II=35
       for (int i = 0; i < array_size; ++i) {
         if (wet[i] > 0) {
           // 35 cycles of stall
-          t = 0.25 + etan * float(wet[i]) / 2.0;
+          t = 0.25 + etan * double(wet[i]) / 2.0;
           etan += t;
         } else {
           etan += 0.25;

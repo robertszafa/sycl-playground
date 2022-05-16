@@ -19,7 +19,7 @@ using namespace sycl;
 
 
 
-void init_data(std::vector<int> &wet, std::vector<float> &B, const int array_size) {
+void init_data(std::vector<int> &wet, std::vector<double> &B, const int array_size) {
   for (int i = 0; i < array_size; ++i) {
     if (i % 2 == 0) 
       wet[i] = 1;
@@ -67,12 +67,12 @@ int main(int argc, char *argv[]) {
     // Print out the device information used for the kernel code.
     std::cout << "Running on device: " << q.get_device().get_info<info::device::name>() << "\n";
 
-    const int ARRAY_SIZE = 1<<20;
+    const int ARRAY_SIZE = 1<<10;
 
     // host data
     // inputs
     std::vector<int> wet(ARRAY_SIZE);
-    std::vector<float> B(ARRAY_SIZE);
+    std::vector<double> B(ARRAY_SIZE);
 
     init_data(wet, B, ARRAY_SIZE);
 
