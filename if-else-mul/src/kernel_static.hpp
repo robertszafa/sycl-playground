@@ -11,27 +11,31 @@
 
 using namespace sycl;
 
-double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<double> &B,
+class compute;
+
+template <typename T>
+double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<T> &B,
                           const int array_size) {
   std::cout << "Static HLS\n";
 
   buffer wet_buf(wet);
   buffer B_buf(B);
 
-  auto event = q.submit([&](handler &hnd) {
+  event e = q.submit([&](handler &hnd) {
     accessor wet(wet_buf, hnd, read_only);
     accessor B(B_buf, hnd, write_only);
 
-    hnd.single_task<class read>([=]() [[intel::kernel_args_restrict]] {
-      double etan, t = 0.0;
-      // II=35
+    hnd.single_task<compute>([=]() [[intel::kernel_args_restrict]]  {
+      T etan, t = 0.0;
+      // II=99
       for (int i = 0; i < array_size; ++i) {
         if (wet[i] > 0) {
-          // 35 cycles of stall
-          t = 0.25 + etan * double(wet[i]) / 2.0;
-          etan += t;
+          // 99 cycles of stall
+          t = 0.25 + etan * T(wet[i]) / 2.0 + exp(etan);
+          etan = etan + t + exp(t+etan);
         } else {
-          etan += 0.25;
+          // 3 cycles of stall
+          etan -= 0.01;
         }
       }
 
@@ -39,8 +43,8 @@ double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<dou
     });
   });
 
-  auto start = event.get_profiling_info<info::event_profiling::command_start>();
-  auto end = event.get_profiling_info<info::event_profiling::command_end>();
+  auto start = e.get_profiling_info<info::event_profiling::command_start>();
+  auto end = e.get_profiling_info<info::event_profiling::command_end>();
   double time_in_ms = static_cast<double>(end - start) / 1000000;
 
   return time_in_ms;

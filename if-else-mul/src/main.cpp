@@ -15,11 +15,14 @@
 #include "kernel_dynamic.hpp"
 #endif
 
+using TYPE = float;
+
 using namespace sycl;
 
 
 
-void init_data(std::vector<int> &wet, std::vector<double> &B, const int array_size) {
+template<typename T>
+void init_data(std::vector<int> &wet, std::vector<T> &B, const int array_size) {
   for (int i = 0; i < array_size; ++i) {
     if (i % 2 == 0) 
       wet[i] = 1;
@@ -67,19 +70,19 @@ int main(int argc, char *argv[]) {
     // Print out the device information used for the kernel code.
     std::cout << "Running on device: " << q.get_device().get_info<info::device::name>() << "\n";
 
-    const int ARRAY_SIZE = 1<<10;
+    const int ARRAY_SIZE = 1<<14;
 
     // host data
     // inputs
     std::vector<int> wet(ARRAY_SIZE);
-    std::vector<double> B(ARRAY_SIZE);
+    std::vector<TYPE> B(ARRAY_SIZE);
 
     init_data(wet, B, ARRAY_SIZE);
 
     auto start = std::chrono::steady_clock::now();
     double kernel_time = 0;
 
-    kernel_time = if_else_mul_kernel(q, wet, B, ARRAY_SIZE);
+    kernel_time = if_else_mul_kernel<float>(q, wet, B, ARRAY_SIZE);
 
     // Wait for all work to finish.
     // q.wait();

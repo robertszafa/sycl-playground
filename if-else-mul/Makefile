@@ -5,7 +5,9 @@ endif
 
 CXX := dpcpp
 CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched
+# CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
+# CXXFLAGS += -Xsghdl
 
 SRC := src/main.cpp
 HDR := src/kernel_$(KERNEL).hpp
@@ -28,10 +30,9 @@ $(BIN).fpga_emu: $(SRC) $(HDR) | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ -DFPGA_EMULATOR=1
 
 $(BIN).fpga_sim: $(SRC) $(HDR) | bin
-	$(CXX) $(CXXFLAGS) -fintelfpga -Xssimulation $< -o $@ -DFPGA=1 
+	$(CXX) $(CXXFLAGS) -fintelfpga -Xssimulation $< -o $@ -DFPGA=1
 
 # To reuse fpga image add: -reuse-exe=$(BIN).fpga
-# To add profiling info do:  -Xsprofile
 $(BIN).fpga: $(BIN).dev.o | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ -Xshardware
 
