@@ -27,10 +27,10 @@ double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<T> 
 
     hnd.single_task<compute>([=]() [[intel::kernel_args_restrict]]  {
       T etan, t = 0.0;
-      // II=99
+      // II=78
       for (int i = 0; i < array_size; ++i) {
         if (wet[i] > 0) {
-          // 99 cycles of stall
+          // 78 cycles of stall
           t = 0.25 + etan * T(wet[i]) / 2.0 + exp(etan);
           etan = etan + t + exp(t+etan);
         } else {

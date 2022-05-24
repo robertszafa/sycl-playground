@@ -4,10 +4,18 @@ endif
 
 
 CXX := dpcpp
-CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched
+CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched 
 # CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
 # CXXFLAGS += -Xsghdl
+
+HARDWARE_FLAGS := -Xshardware -DFPGA=1 
+# -reuse-exe=$(BIN).fpga
+# -Xssfc-exit-fifo-type=zero-latency
+
+SIMULATION_FLAGS := -Xssimulation -DFPGA=1 
+# -reuse-exe=$(BIN).fpga
+# -Xssfc-exit-fifo-type=zero-latency
 
 SRC := src/main.cpp
 HDR := src/kernel_$(KERNEL).hpp
@@ -30,11 +38,11 @@ $(BIN).fpga_emu: $(SRC) $(HDR) | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ -DFPGA_EMULATOR=1
 
 $(BIN).fpga_sim: $(SRC) $(HDR) | bin
-	$(CXX) $(CXXFLAGS) -fintelfpga -Xssimulation $< -o $@ -DFPGA=1
+	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ $(SIMULATION_FLAGS)
 
 # To reuse fpga image add: -reuse-exe=$(BIN).fpga
 $(BIN).fpga: $(BIN).dev.o | bin
-	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ -Xshardware
+	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ $(HARDWARE_FLAGS)
 
 $(BIN).dev.o: $(SRC) $(HDR) | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga -c $< -o $@ -DFPGA=1 
@@ -48,4 +56,4 @@ bin:
 	mkdir $@
 
 clean:
-	rm -rf *.o *.d *.out *.mon *.emu *.aocr *.aoco *.prj *.fpga_emu *.fpga *.a bin/*
+	rm -rf *.o *.d *.out *.mon *.emu *.aocr *.aoco *.prj *.fpga_emu *.fpga *.log *.a bin/*
