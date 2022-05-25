@@ -5,13 +5,12 @@
 #include <iostream>
 #include <vector>
 
-#if FPGA || FPGA_EMULATOR
 #include <sycl/ext/intel/fpga_extensions.hpp>
-#endif
 
 using namespace sycl;
 
-class compute;
+// Forward declare kernel names to avoid name mangling.
+class Compute;
 
 template <typename T>
 double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<T> &B,
@@ -25,12 +24,12 @@ double if_else_mul_kernel(queue &q, const std::vector<int> &wet, std::vector<T> 
     accessor wet(wet_buf, hnd, read_only);
     accessor B(B_buf, hnd, write_only);
 
-    hnd.single_task<compute>([=]() [[intel::kernel_args_restrict]]  {
+    hnd.single_task<Compute>([=]() [[intel::kernel_args_restrict]]  {
       T etan, t = 0.0;
       // II=78
       for (int i = 0; i < array_size; ++i) {
         if (wet[i] > 0) {
-          // 78 cycles of stall
+          // 78 cycles of stall for 32-bit (more for 64-bit since can't use DSPs)
           t = 0.25 + etan * T(wet[i]) / 2.0 + exp(etan);
           etan = etan + t + exp(t+etan);
         } else {

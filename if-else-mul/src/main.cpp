@@ -4,14 +4,11 @@
 
 #include <stdlib.h>
 
-
-#if FPGA || FPGA_EMULATOR
 #include <sycl/ext/intel/fpga_extensions.hpp>
-#endif
 
 #if static_sched
 #include "kernel_static.hpp"
-#else 
+#else
 #include "kernel_dynamic.hpp"
 #endif
 
@@ -19,14 +16,12 @@ using TYPE = float;
 
 using namespace sycl;
 
-
-
-template<typename T>
+template <typename T>
 void init_data(std::vector<int> &wet, std::vector<T> &B, const int array_size) {
   for (int i = 0; i < array_size; ++i) {
-    if (i % 2 == 0) 
+    if (i % 2 == 0)
       wet[i] = 1;
-    else 
+    else
       wet[i] = 0;
 
     B[i] = i;
@@ -70,7 +65,7 @@ int main(int argc, char *argv[]) {
     // Print out the device information used for the kernel code.
     std::cout << "Running on device: " << q.get_device().get_info<info::device::name>() << "\n";
 
-    const int ARRAY_SIZE = 1<<14;
+    const int ARRAY_SIZE = 1 << 14;
 
     // host data
     // inputs
@@ -86,12 +81,12 @@ int main(int argc, char *argv[]) {
 
     // Wait for all work to finish.
     // q.wait();
-    
+
     std::cout << "\nKernel time (ms): " << kernel_time << "\n";
     std::cout << "B[0] = " << B[0] << "\n";
 
     auto stop = std::chrono::steady_clock::now();
-    double total_time = (std::chrono::duration<double> (stop - start)).count() * 1000.0;
+    double total_time = (std::chrono::duration<double>(stop - start)).count() * 1000.0;
     // std::cout << "Total time (ms): " << total_time << "\n";
   } catch (exception const &e) {
     std::cout << "An exception was caught.\n";
