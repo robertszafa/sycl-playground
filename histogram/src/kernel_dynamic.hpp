@@ -5,8 +5,6 @@
 #include <iostream>
 #include <vector>
 
-#include "pipe_utils.hpp"
-#include "unrolled_loop.hpp"
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 using namespace sycl;
@@ -14,15 +12,14 @@ using namespace sycl;
 class HistogramKernel;
 
 constexpr uint STORE_LATENCY = 72;
-// constexpr uint STOREQ_ENTRIES = 8;
-constexpr uint STOREQ_ENTRIES = 1;
+constexpr uint STOREQ_ENTRIES = Q_SIZE;
 
 struct idx_val_pair {
   uint idx;
   uint val;
 };
 
-double histogram_kernel(queue &q, queue &q2, const std::vector<uint> &feature, const std::vector<uint> &weight,
+double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::vector<uint> &weight,
                         std::vector<uint> &hist) {
   std::cout << "Dynamic HLS\n";
 
@@ -32,37 +29,19 @@ double histogram_kernel(queue &q, queue &q2, const std::vector<uint> &feature, c
   buffer weight_buf(weight);
   buffer hist_buf(hist);
 
-  // using p_wt = pipe<class p_wt_class, uint>;
-  // using p_m_store = pipe<class p_m_store_class, uint>;
-  using p_m_load = pipe<class p_m_load_class, uint, 4>;
+  using p_m_load = pipe<class p_m_load_class, uint, STORE_LATENCY>;
 
-  using p_store_ack = pipe<class p_store_ack_class, uint, 4>;
-  using p_m_hist_store = pipe<class p_hist_store_class, idx_val_pair, 4>;
-  using p_m_hist_store2 = pipe<class p_hist_store2_class, idx_val_pair, 4>;
+  using p_store_ack = pipe<class p_store_ack_class, uint, STORE_LATENCY>;
+  using p_m_hist_store = pipe<class p_hist_store_class, idx_val_pair, STORE_LATENCY>;
+  using p_m_hist_store2 = pipe<class p_hist_store2_class, idx_val_pair, STORE_LATENCY>;
 
-  using p_to_store =
-      pipe<class p_to_store_class, idx_val_pair, 4>;
+  using p_to_store = pipe<class p_to_store_class, idx_val_pair, STORE_LATENCY>;
 
-  using p_hist_out = pipe<class p_hist_out_class, uint, 4>;
+  using p_hist_out = pipe<class p_hist_out_class, uint, STORE_LATENCY>;
 
-  using p_predicate = pipe<class p_predicate_class, bool, 4>;
-  using p_predicate_port = pipe<class p_predicate_port_class, bool, 4>;
+  using p_predicate = pipe<class p_predicate_class, bool, STORE_LATENCY>;
+  using p_predicate_port = pipe<class p_predicate_port_class, bool, STORE_LATENCY>;
 
-
-  q2.submit([&](handler &hnd) {
-    accessor hist(hist_buf, hnd, write_only);
-
-    hnd.single_task<class StorePort>([=]() [[intel::kernel_args_restrict]] {
-      [[intel::ivdep]]
-      while (p_predicate_port::read()) {
-        auto hist_store = p_m_hist_store2::read();
-
-        hist[hist_store.idx] = hist_store.val;
-        atomic_fence(memory_order_seq_cst, memory_scope_work_item);
-        p_store_ack::write(hist_store.idx);
-      }
-    });
-  });
 
   auto event = q.submit([&](handler &hnd) {
     accessor feature(feature_buf, hnd, read_only);
@@ -74,7 +53,6 @@ double histogram_kernel(queue &q, queue &q2, const std::vector<uint> &feature, c
         auto m = feature[i];
         auto wt = weight[i];
 
-        // p_predicate::write(true);
         p_m_load::write(m);
 
         // sycl::ext::oneapi::experimental::printf("Issued load \n");
@@ -93,116 +71,93 @@ double histogram_kernel(queue &q, queue &q2, const std::vector<uint> &feature, c
   });
 
   q.submit([&](handler &hnd) {
-    // accessor hist(hist_buf, hnd, read_only);
+    accessor hist(hist_buf, hnd, read_write);
 
     struct store_entry {
       uint idx;
       uint val;
-      bool in_flight;
+      int count_down;
     };
 
-    // using store_ack_pipe_array = fpga_tools::PipeArray< // Defined in "pipe_utils.hpp".
-    //     class class_store_ack_pipe_array,               // An identifier for the pipe.
-    //     bool,                                           // The type of data in the pipe.
-    //     0,                                              // The capacity of each pipe.
-    //     STOREQ_ENTRIES                                  // array dimension.
-    //     >;
 
     hnd.single_task<class HistLSQ>([=]() [[intel::kernel_args_restrict]] {
       store_entry store_q[STOREQ_ENTRIES];
-#pragma unroll
-      for (uint i = 0; i < STORE_LATENCY; ++i)
-        store_q[i] = {(uint)-1, (uint)-1, false};
 
-      bool predicate_read_succ = false;
+      bool terminate_signal = false;
       bool any_in_flight = false;
-      uint timestamp = 0;
 
-      // while (p_predicate::read()) {
-      // while (1) {
       [[intel::ivdep]] 
       do {
 
-        if (!predicate_read_succ)
-          auto _dc = p_predicate::read(predicate_read_succ);
-
+        // Count free slots in the queue. Get any free slot (we're ok with non-determinism here).
         int next_slot = -1;
-
-        // Count free slots in the queue.
-        uint num_in_flight = 0;
         #pragma unroll
         for (uint i = 0; i < STOREQ_ENTRIES; ++i) {
-          if (store_q[i].in_flight) {
-            num_in_flight += 1;
-          }
-          else {
+          store_q[i].count_down -= 1;
+
+          if (store_q[i].count_down <= 0) {
             next_slot = i;
+            store_q[i].count_down = 0;
           }
         }
 
-        bool stall_stores = num_in_flight >= STOREQ_ENTRIES;
-        bool is_store = false;
         bool is_load = false;
-        uint m_load;
+        auto m_load = p_m_load::read(is_load);
+
+        bool is_store = false;
         idx_val_pair m_hist_store;
 
-        m_load = p_m_load::read(is_load);
-        if (!stall_stores)
+        // Only accept new store entry if there's space for it. If not, it will wait in the FIFO.
+        bool stall_store = next_slot == -1;
+        if (!stall_store)
           m_hist_store = p_m_hist_store::read(is_store);
 
-
-        ////// Load logic
+        /* Load logic */
         if (is_load) {
+          // Check if there already is an in-flight store to the requested index.
+          // TODO: Select younger store based on count_down.
           bool in_flight_ld_logic = false;
           uint hist_forward;
-
-          // Check if there laready is an in-flight store to the requested index.
           #pragma unroll
           for (uint i = 0; i < STOREQ_ENTRIES; ++i) {
             in_flight_ld_logic |= (m_load == store_q[i].idx);
-            if (in_flight_ld_logic) {
+            if (in_flight_ld_logic) 
               hist_forward = store_q[i].val;
-            }
           }
 
-          // If found, forward the value from the storeQ to the load. Otherwise, issue load.
+          // If yes, use its value.
           if (in_flight_ld_logic)
             p_hist_out::write(hist_forward);
           else
-            p_hist_out::write(0); // Dummy value for now, issuing actual ld results in deadlock.
-            // p_hist_out::write(hist[m_load]);
+            p_hist_out::write(hist[m_load]);
         }
+        /* End Load logic */
 
-        ////// Store logic
+        /* Store logic */
         if (is_store) {
-          // Check if a different store to the same address is in flight.
-          #pragma unroll
-          for (uint i = 0; i < STOREQ_ENTRIES; ++i) {
-            if (m_hist_store.idx == store_q[i].idx)
-              store_q[i] = store_entry{(uint) -1, (uint) -1, false};
-          }
-
-          // Enqueue store.
-          p_predicate_port::write(true);
-          p_m_hist_store2::write(m_hist_store);
-          store_q[next_slot] = store_entry{m_hist_store.idx, m_hist_store.val, true};
+          hist[m_hist_store.idx] = m_hist_store.val;
+          store_q[next_slot] = store_entry{m_hist_store.idx, m_hist_store.val, STORE_LATENCY};
+          // atomic_fence(memory_order_seq_cst, memory_scope_device);
+          // p_store_ack::write(m_hist_store.idx);
         }
+        /* End Store logic */
 
-        bool ack_success = false;
-        auto i_ack = p_store_ack::read(ack_success);
-        if (ack_success) {
-          store_q[i_ack].in_flight = false;
-        }
+        // bool ack_success = false;
+        // auto i_ack = p_store_ack::read(ack_success);
+        // if (ack_success) {
+        //   store_q[i_ack].in_flight = false;
+        // }
 
         any_in_flight = false;
         #pragma unroll
         for (uint i = 0; i < STOREQ_ENTRIES; ++i)
-          any_in_flight |= store_q[i].in_flight;
+          any_in_flight |= (store_q[i].count_down > 0);
 
-      } while (!predicate_read_succ || any_in_flight);
+        if (!terminate_signal)
+          auto _dc = p_predicate::read(terminate_signal);
 
-      p_predicate_port::write(false);
-      // sycl::ext::oneapi::experimental::printf("Finished LSQ\n");
+      } while (!terminate_signal || any_in_flight);
+
     });
   });
  
