@@ -28,9 +28,9 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
 
     hnd.single_task<HistogramKernel>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
-        int m = feature[i];
-        float wt = weight[i];
-        float x = hist[m];
+        uint wt = weight[i];
+        uint m = feature[i];
+        uint x = hist[m];
         hist[m] = x + wt;
       }
     });

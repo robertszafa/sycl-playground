@@ -11,13 +11,16 @@
 #else 
 #include "kernel_dynamic.hpp"
 #endif
+#include "tables.hpp"
 
 using namespace sycl;
 
 void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vector<uint> &hist) {
   for (int i = 0; i < feature.size(); i++) {
-    feature[i] = i;
-    weight[i] = 1;
+    feature[i] = (feature.size() == 1024) ? random_indx_1024[i] : i;
+    // feature[i] = i;
+
+    weight[i] = (i % 2 == 0) ? 1 : 0;
     hist[i] = 0;
   }
 }
@@ -55,11 +58,14 @@ int main(int argc, char *argv[]) {
     // Enable profiling.
     property_list properties{property::queue::enable_profiling()};
     queue q(d_selector, exception_handler, properties);
+    queue q2(d_selector, exception_handler, properties);
 
     // Print out the device information used for the kernel code.
     std::cout << "Running on device: " << q.get_device().get_info<info::device::name>() << "\n";
 
-    const uint ARRAY_SIZE = 64;
+    const uint ARRAY_SIZE = A_SIZE;
+
+    std::cout << "Array size = " << ARRAY_SIZE << "\n";
 
     // host data
     // inputs

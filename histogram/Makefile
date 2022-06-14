@@ -2,12 +2,28 @@ ifndef KERNEL
 KERNEL := dynamic
 endif
 
+ifndef Q_SIZE
+Q_SIZE := 1
+endif
+
+ifndef A_SIZE
+A_SIZE := 64
+endif
+
+# For Pipe Array headers, etc
+INC := /home/rob/git/oneAPI-samples/DirectProgramming/DPC++FPGA/include
+
 SRC := src/main.cpp
 HDR := src/kernel_$(KERNEL).hpp
-BIN := bin/histogram_$(KERNEL)
+BIN := bin/histogram_$(KERNEL)_$(A_SIZE)asize
+
+# ifeq ($(KERNEL), dynamic)
+# 	BIN := bin/histogram_$(KERNEL)_$(Q_SIZE)qsize_$(A_SIZE)asize
+# endif
+
 
 CXX := dpcpp
-CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched 
+CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -I$(INC) -DQ_SIZE=$(Q_SIZE) -DA_SIZE=$(A_SIZE)
 # CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
 # CXXFLAGS += -Xsghdl
@@ -37,11 +53,9 @@ $(BIN): $(SRC) $(HDR) | bin
 $(BIN).fpga_emu: $(SRC) $(HDR) | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ -DFPGA_EMULATOR=1
 
-# $(BIN).fpga_sim: $(SRC) $(HDR) | bin
 $(BIN).fpga_sim: $(BIN).dev.o | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ $(SIMULATION_FLAGS)
 
-# To reuse fpga image add: -reuse-exe=$(BIN).fpga
 $(BIN).fpga: $(BIN).dev.o | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ $(HARDWARE_FLAGS)
 

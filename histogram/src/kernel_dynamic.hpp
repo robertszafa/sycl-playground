@@ -9,15 +9,18 @@
 
 using namespace sycl;
 
-class HistogramKernel;
+using PipelinedLSU = ext::intel::lsu<>;
+using BurstCoalescedLSU = ext::intel::lsu<ext::intel::burst_coalesce<false>, 
+                                          ext::intel::statically_coalesce<false>>;
 
-constexpr uint STORE_LATENCY = 72;
-constexpr uint STOREQ_ENTRIES = Q_SIZE;
+// This should be STORE_Q_SIZE >= STORE_LATENCY
+constexpr uint STORE_Q_SIZE = 72;
 
-struct idx_val_pair {
-  uint idx;
+struct store_entry {
+  uint idx; // This should be the full address in a real impl.
   uint val;
 };
+
 
 double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::vector<uint> &weight,
                         std::vector<uint> &hist) {
@@ -29,138 +32,82 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
   buffer weight_buf(weight);
   buffer hist_buf(hist);
 
-  using p_m_load = pipe<class p_m_load_class, uint, STORE_LATENCY>;
+  using weight_load_pipe = pipe<class weight_load_pipe_class, uint>;
+  using feature_load_pipe = pipe<class feature_load_pipe_class, uint>;
+  using hist_load_pipe = pipe<class hist_load_pipe_class, uint>;
 
-  using p_store_ack = pipe<class p_store_ack_class, uint, STORE_LATENCY>;
-  using p_m_hist_store = pipe<class p_hist_store_class, idx_val_pair, STORE_LATENCY>;
-  using p_m_hist_store2 = pipe<class p_hist_store2_class, idx_val_pair, STORE_LATENCY>;
-
-  using p_to_store = pipe<class p_to_store_class, idx_val_pair, STORE_LATENCY>;
-
-  using p_hist_out = pipe<class p_hist_out_class, uint, STORE_LATENCY>;
-
-  using p_predicate = pipe<class p_predicate_class, bool, STORE_LATENCY>;
-  using p_predicate_port = pipe<class p_predicate_port_class, bool, STORE_LATENCY>;
-
+  using hist_store_pipe = pipe<class hist_store_pipe_class, uint>;
 
   auto event = q.submit([&](handler &hnd) {
-    accessor feature(feature_buf, hnd, read_only);
     accessor weight(weight_buf, hnd, read_only);
 
-    hnd.single_task<HistogramKernel>([=]() [[intel::kernel_args_restrict]] {
+    hnd.single_task<class LoadWeight>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
+        uint wt = weight[i];
+        weight_load_pipe::write(wt);
+      }
+    });
+  });
+ 
+  q.submit([&](handler &hnd) {
+    accessor hist(hist_buf, hnd, read_write);
+    accessor feature(feature_buf, hnd, read_only);
 
-        auto m = feature[i];
-        auto wt = weight[i];
+    hnd.single_task<class LoadStoreHist>([=]() [[intel::kernel_args_restrict]] {
+      [[intel::fpga_register]] store_entry store_q[STORE_Q_SIZE];
 
-        p_m_load::write(m);
-
-        // sycl::ext::oneapi::experimental::printf("Issued load \n");
-        auto x = p_hist_out::read();
-        auto x_new = x + wt;
-        // sycl::ext::oneapi::experimental::printf("Received value \n");
-
-        // hist[m] = x + wt;
-        p_m_hist_store::write(idx_val_pair{m, x_new});
-        // sycl::ext::oneapi::experimental::printf("Issued store \n");
+      // All entries are invalid at the start.
+      #pragma unroll
+      for (uint i=0; i<STORE_Q_SIZE; ++i) {
+        store_q[i].idx = (uint) -1;
       }
 
-      // sycl::ext::oneapi::experimental::printf("Finished \n");
-      p_predicate::write(false);
+      [[intel::ivdep]]
+      for (int i = 0; i < array_size; ++i) {
+        // Move the store queue forward by one every cycle.
+        #pragma unroll
+        for (uint i=0; i<STORE_Q_SIZE-1; ++i) {
+          store_q[i] = store_q[i+1];
+        }
+
+        uint m = feature[i];
+
+        bool forward = false;
+        uint hist_val;
+
+        // TODO: Do we need to explicitly pick the latest matching entry:
+        //       the one with the hisghest idx? 
+        #pragma unroll
+        for (uint i=0; i<STORE_Q_SIZE; ++i) {
+          if (store_q[i].idx == ext::intel::fpga_reg(m)) {
+            forward = true;
+            hist_val = store_q[i].val;
+          }
+        }
+
+        if (!forward) hist_val = PipelinedLSU::load(hist.get_pointer() + m);
+        hist_load_pipe::write(hist_val);
+
+        auto new_hist = hist_store_pipe::read();
+        hist[m] = new_hist;
+        store_q[STORE_Q_SIZE-1] = store_entry{m, new_hist};
+      }
     });
   });
 
   q.submit([&](handler &hnd) {
-    accessor hist(hist_buf, hnd, read_write);
+    hnd.single_task<class Compute>([=]() [[intel::kernel_args_restrict]] {
+      for (int i = 0; i < array_size; ++i) {
+        uint wt = weight_load_pipe::read();
+        uint hist = hist_load_pipe::read();
 
-    struct store_entry {
-      uint idx;
-      uint val;
-      int count_down;
-    };
+        auto new_hist = hist + wt;
 
-
-    hnd.single_task<class HistLSQ>([=]() [[intel::kernel_args_restrict]] {
-      store_entry store_q[STOREQ_ENTRIES];
-
-      bool terminate_signal = false;
-      bool any_in_flight = false;
-
-      [[intel::ivdep]] 
-      do {
-
-        // Count free slots in the queue. Get any free slot (we're ok with non-determinism here).
-        int next_slot = -1;
-        #pragma unroll
-        for (uint i = 0; i < STOREQ_ENTRIES; ++i) {
-          store_q[i].count_down -= 1;
-
-          if (store_q[i].count_down <= 0) {
-            next_slot = i;
-            store_q[i].count_down = 0;
-          }
-        }
-
-        bool is_load = false;
-        auto m_load = p_m_load::read(is_load);
-
-        bool is_store = false;
-        idx_val_pair m_hist_store;
-
-        // Only accept new store entry if there's space for it. If not, it will wait in the FIFO.
-        bool stall_store = next_slot == -1;
-        if (!stall_store)
-          m_hist_store = p_m_hist_store::read(is_store);
-
-        /* Load logic */
-        if (is_load) {
-          // Check if there already is an in-flight store to the requested index.
-          // TODO: Select younger store based on count_down.
-          bool in_flight_ld_logic = false;
-          uint hist_forward;
-          #pragma unroll
-          for (uint i = 0; i < STOREQ_ENTRIES; ++i) {
-            in_flight_ld_logic |= (m_load == store_q[i].idx);
-            if (in_flight_ld_logic) 
-              hist_forward = store_q[i].val;
-          }
-
-          // If yes, use its value.
-          if (in_flight_ld_logic)
-            p_hist_out::write(hist_forward);
-          else
-            p_hist_out::write(hist[m_load]);
-        }
-        /* End Load logic */
-
-        /* Store logic */
-        if (is_store) {
-          hist[m_hist_store.idx] = m_hist_store.val;
-          store_q[next_slot] = store_entry{m_hist_store.idx, m_hist_store.val, STORE_LATENCY};
-          // atomic_fence(memory_order_seq_cst, memory_scope_device);
-          // p_store_ack::write(m_hist_store.idx);
-        }
-        /* End Store logic */
-
-        // bool ack_success = false;
-        // auto i_ack = p_store_ack::read(ack_success);
-        // if (ack_success) {
-        //   store_q[i_ack].in_flight = false;
-        // }
-
-        any_in_flight = false;
-        #pragma unroll
-        for (uint i = 0; i < STOREQ_ENTRIES; ++i)
-          any_in_flight |= (store_q[i].count_down > 0);
-
-        if (!terminate_signal)
-          auto _dc = p_predicate::read(terminate_signal);
-
-      } while (!terminate_signal || any_in_flight);
-
+        hist_store_pipe::write(new_hist);
+      }
     });
   });
- 
+
 
 
   auto start = event.get_profiling_info<info::event_profiling::command_start>();
@@ -169,3 +116,4 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
 
   return time_in_ms;
 }
+
