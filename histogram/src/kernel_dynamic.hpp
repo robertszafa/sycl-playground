@@ -14,7 +14,7 @@ using BurstCoalescedLSU = ext::intel::lsu<ext::intel::burst_coalesce<false>,
                                           ext::intel::statically_coalesce<false>>;
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 72;
+constexpr uint STORE_LATENCY = 128;
 
 struct store_entry {
   int idx; // This should be the full address in a real impl.
@@ -39,12 +39,11 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
   buffer weight_buf(weight);
   buffer hist_buf(hist);
 
-  using weight_load_pipe = pipe<class weight_load_pipe_class, uint, 16>;
-  using feature_load_pipe = pipe<class feature_load_pipe_class, uint, 16>;
-  using feature_store_pipe = pipe<class feature_store_pipe_class, uint, 16>;
-  using hist_load_pipe = pipe<class hist_load_pipe_class, uint, 32>;
-
-  using hist_store_pipe = pipe<class hist_store_pipe_class, uint>;
+  using weight_load_pipe = pipe<class weight_load_pipe_class, uint, 64>;
+  using feature_load_pipe = pipe<class feature_load_pipe_class, uint, 64>;
+  using feature_store_pipe = pipe<class feature_store_pipe_class, uint, 64>;
+  using hist_load_pipe = pipe<class hist_load_pipe_class, uint, 4>;
+  using hist_store_pipe = pipe<class hist_store_pipe_class, uint, 4>;
 
   auto event = q.submit([&](handler &hnd) {
     accessor weight(weight_buf, hnd, read_only);
@@ -77,25 +76,24 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
     accessor hist(hist_buf, hnd, read_write);
 
     hnd.single_task<class LoadStoreHist>([=]() [[intel::kernel_args_restrict]] {
-      [[intel::fpga_register]] store_entry store_q[STORE_Q_SIZE];
-      
+      [[intel::fpga_register]] store_entry store_entries[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, idx_into_hist} pairs.
-      constexpr uint IDX_FIFO_SIZE = STORE_Q_SIZE;
-      [[intel::fpga_register]] pair store_idx_fifo[IDX_FIFO_SIZE];
-      uint store_idx_fifo_head = 0;
+      [[intel::fpga_register]] pair store_idx_fifo[STORE_Q_SIZE];
 
       // All entries are invalid at the start.
       #pragma unroll
       for (uint i=0; i<STORE_Q_SIZE; ++i) {
-        store_q[i] = {-1, 0, false, -1};
+        store_entries[i] = {-1, 0, false, -1};
       }
 
       uint i_store_vals = 0;
       uint i_store_idxs = 0;
       uint i_load = 0;
+      uint store_idx_fifo_head = 0;
 
       // Is load written in the client pipe?
       bool load_returned = true;
+      bool load_waiting_for_val = false;
       uint load_val;
 
       [[intel::ivdep]]
@@ -104,26 +102,36 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         // sycl::ext::oneapi::experimental::printf("\n -- Iter --\n");
 
         /* Load logic */
-        if (i_load < array_size && load_returned) {
+        if (i_load < array_size && i_store_idxs > i_load && load_returned) {// && store_idx_fifo_head < STORE_Q_SIZE) {
           bool load_idx_pipe_succ = false;
-          auto load_idx = feature_load_pipe::read(load_idx_pipe_succ);
+          uint load_idx;
+          
+          // TODO: tag each load and store idx with the iteration/priority.
+          if (!load_waiting_for_val)
+            load_idx = feature_load_pipe::read(load_idx_pipe_succ);
 
-          if (load_idx_pipe_succ) {
+          if (load_idx_pipe_succ || load_waiting_for_val) {
             bool forward = false;
 
-            // TODO: Handle case where idx matches but store value is not yet available!
+            // Maybe forward and load_waiting_for_val are both true sometimes, leading to deadlock?
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
-              if (store_q[i].idx == load_idx && store_q[i].executed) {
-                forward = true;
-                load_val = store_q[i].val;
+              if (store_entries[i].idx == load_idx && store_entries[i].executed) {
+                forward |= true;
+                load_val = store_entries[i].val;
+              }
+              else if (store_entries[i].idx == load_idx && !store_entries[i].executed) {
+                load_waiting_for_val |= true;
               }
             }
+
+            if (load_waiting_for_val) goto end_logic_label;
 
             if (!forward) {
               load_val = PipelinedLSU::load(hist.get_pointer() + load_idx);
             }
             load_returned = false;
+            load_waiting_for_val = false;
           }
         }
         if (i_load < array_size && !load_returned) {
@@ -131,9 +139,9 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
           hist_load_pipe::write(load_val, load_returned);
           if (load_returned) {
             i_load += 1;
-            // sycl::ext::oneapi::experimental::printf("Written to compute %d\n", load_val);
           }
         }
+        end_logic_label:
         /* End Load logic */
 
         /* Store logic */
@@ -141,39 +149,36 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         int next_q_slot = -1;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          if (store_q[i].executed) {
-            store_q[i].countdown -= 1;
+          if (store_entries[i].executed) {
+            store_entries[i].countdown -= 1;
           }
 
-          if (store_q[i].countdown <= 0) {
+          if (store_entries[i].countdown <= 0) {
             next_q_slot = i;
-            store_q[i] = {-1, 0, false, -1};
+            store_entries[i] = {-1, 0, false, -1};
           }
         }
-        // sycl::ext::oneapi::experimental::printf("next_slot %d\n", next_q_slot);
 
         // Non blocking store_idx read.
         uint store_idx;
         bool store_idx_pipe_succ = false;
-        if (next_q_slot != -1 && store_idx_fifo_head < IDX_FIFO_SIZE) {
+        if (next_q_slot != -1 && store_idx_fifo_head < STORE_Q_SIZE) {
           store_idx = feature_store_pipe::read(store_idx_pipe_succ);
         }
 
         if (store_idx_pipe_succ) {
-          // sycl::ext::oneapi::experimental::printf("Next store_idx %d\n", store_idx);
-          store_q[next_q_slot].idx = store_idx;
-          store_q[next_q_slot].countdown = STORE_LATENCY;
+          store_entries[next_q_slot].idx = store_idx;
+          store_entries[next_q_slot].countdown = STORE_LATENCY;
 
           store_idx_fifo[store_idx_fifo_head] = {next_q_slot, store_idx};
-          store_idx_fifo_head += 1;
 
+          store_idx_fifo_head += 1;
           i_store_idxs += 1;
         }
 
         // Non blocking store_val read.
         bool store_val_pipe_succ = false;
-
-        uint store_val ;
+        uint store_val;
         if (i_store_idxs > i_store_vals) {
           store_val = hist_store_pipe::read(store_val_pipe_succ);
         }
@@ -184,10 +189,10 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
           // sycl::ext::oneapi::experimental::printf("Stored hist[ %d ]\n", q_idx_hist_idx_pair.idx_hist);
           // sycl::ext::oneapi::experimental::printf("Q slot %d\n", q_idx_hist_idx_pair.idx_q);
           hist[q_idx_hist_idx_pair.idx_hist] = store_val;
-          store_q[q_idx_hist_idx_pair.idx_q].executed = true;
+          store_entries[q_idx_hist_idx_pair.idx_q].executed = true;
 
           #pragma unroll
-          for (uint i=1; i<IDX_FIFO_SIZE; ++i) {
+          for (uint i=1; i<STORE_Q_SIZE; ++i) {
             store_idx_fifo[i-1] = store_idx_fifo[i];
           }
 
