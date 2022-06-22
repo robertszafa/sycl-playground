@@ -9,12 +9,14 @@
 
 using namespace sycl;
 
+// The default PipelinedLSU will start a load/store immediately, which the memory disambiguation 
+// logic relies upon.
+// A BurstCoalescedLSU would instead of waiting for more requests to arrive for a coalesced access.
 using PipelinedLSU = ext::intel::lsu<>;
-using BurstCoalescedLSU = ext::intel::lsu<ext::intel::burst_coalesce<false>, 
-                                          ext::intel::statically_coalesce<false>>;
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 256;
+constexpr uint STORE_LATENCY = 80;
+
 
 struct store_entry {
   int idx; // This should be the full address in a real impl.
@@ -45,7 +47,7 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
   using val_load_pipe = pipe<class hist_load_pipe_class, uint, 4>;
   using val_store_pipe = pipe<class hist_store_pipe_class, uint, 4>;
 
-  auto event = q.submit([&](handler &hnd) {
+  q.submit([&](handler &hnd) {
     accessor weight(weight_buf, hnd, read_only);
 
     hnd.single_task<class LoadWeight>([=]() [[intel::kernel_args_restrict]] {
@@ -96,7 +98,7 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
       bool val_load_pipe_write_succ = true;
       bool is_load_waiting_for_val = false;
 
-      [[intel::ivdep]]
+      [[intel::ivdep]] 
       while (i_store_val < array_size) {
         /* Start Load Logic */
         if (i_load < array_size && i_load <= i_store_idx && val_load_pipe_write_succ) {
@@ -121,7 +123,7 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
             }
 
             if (!is_in_flight && !is_load_waiting_for_val) {
-              val_load = hist[idx_load];
+              val_load = PipelinedLSU::load(hist.get_pointer() + idx_load);
             }
 
             if (!is_load_waiting_for_val) {
@@ -133,11 +135,13 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
           }
         }
         else if (i_load < array_size && i_load <= i_store_idx && !val_load_pipe_write_succ) {
+          // TODO: is this needed?
           if (!val_load_pipe_write_succ && !is_load_waiting_for_val) {
             val_load_pipe::write(val_load, val_load_pipe_write_succ);
             if (val_load_pipe_write_succ) {
               i_load++;
             }
+            is_load_waiting_for_val = false;
           }
         }
         /* End Load Logic */
@@ -178,8 +182,9 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
 
         if (val_store_pipe_succ) {
           auto entry_store_idx_pair = store_idx_fifo[0];           
-          hist[entry_store_idx_pair.store_idx] = val_store;
+          store_entries[entry_store_idx_pair.queue_idx].val = val_store;
           store_entries[entry_store_idx_pair.queue_idx].executed = true;
+          PipelinedLSU::store(hist.get_pointer() + entry_store_idx_pair.store_idx, val_store);
 
           #pragma unroll
           for (uint i=1; i<STORE_Q_SIZE; ++i) {
@@ -192,10 +197,13 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         /* End Store Logic */
       }
 
+      // TODO: do we need to wait for the last store to commit? Probably not..
+      // atomic_fence(memory_order_seq_cst, memory_scope_device);
+
     });
   });
 
-  q.submit([&](handler &hnd) {
+  auto event = q.submit([&](handler &hnd) {
     hnd.single_task<class Compute>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
         uint wt = weight_load_pipe::read();
