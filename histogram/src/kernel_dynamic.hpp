@@ -15,7 +15,7 @@ using namespace sycl;
 using PipelinedLSU = ext::intel::lsu<>;
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 80;
+constexpr uint STORE_LATENCY = 23;
 
 
 struct store_entry {
@@ -215,7 +215,7 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
       }
 
       // TODO: do we need to wait for the last store to commit? Probably not..
-      atomic_fence(memory_order_seq_cst, memory_scope_device);
+      // atomic_fence(memory_order_seq_cst, memory_scope_device);
 
     });
   });

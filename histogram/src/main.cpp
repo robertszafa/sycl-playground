@@ -17,8 +17,10 @@ using namespace sycl;
 
 void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vector<uint> &hist) {
   for (int i = 0; i < feature.size(); i++) {
-    feature[i] = (feature.size() == 1024) ? random_indx_1024[i] : i;
-    // feature[i] = i;
+    feature[i] = (feature.size() >= 4 && feature.size() <= 1024) 
+                 ? random_indx_1024[i] 
+                 : i % 3;
+    // feature[i] = i % (STORE_LATENCY+2);
 
     weight[i] = (i % 2 == 0) ? 1 : 0;
     hist[i] = 0;
