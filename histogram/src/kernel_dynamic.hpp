@@ -23,11 +23,19 @@ struct store_entry {
   uint val;
   bool executed;
   int countdown;
+  int tag;
 };
+
+constexpr store_entry INVALID_ENTRY = {-1, 0, false, -1, -1};
 
 struct pair {
   int queue_idx; 
   uint store_idx; 
+};
+
+struct candidate {
+  int tag; 
+  bool forward;
 };
 
 
@@ -44,8 +52,8 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
   using weight_load_pipe = pipe<class weight_load_pipe_class, uint, 64>;
   using idx_load_pipe = pipe<class feature_load_pipe_class, uint, 64>;
   using idx_store_pipe = pipe<class feature_store_pipe_class, uint, 64>;
-  using val_load_pipe = pipe<class hist_load_pipe_class, uint, 4>;
-  using val_store_pipe = pipe<class hist_store_pipe_class, uint, 4>;
+  using val_load_pipe = pipe<class hist_load_pipe_class, uint, 64>;
+  using val_store_pipe = pipe<class hist_store_pipe_class, uint, 64>;
 
   q.submit([&](handler &hnd) {
     accessor weight(weight_buf, hnd, read_only);
@@ -79,13 +87,15 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
 
     hnd.single_task<class LoadStoreHist>([=]() [[intel::kernel_args_restrict]] {
       [[intel::fpga_register]] store_entry store_entries[STORE_Q_SIZE];
+      // A FIFO of {idx_into_store_q, tag} pairs to pick the youngest store from the store entries.
+      [[intel::fpga_register]] candidate forward_candidates[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, idx_into_hist} pairs.
       [[intel::fpga_register]] pair store_idx_fifo[STORE_Q_SIZE];
 
       // All entries are invalid at the start.
       #pragma unroll
       for (uint i=0; i<STORE_Q_SIZE; ++i) {
-        store_entries[i] = {-1, 0, false, -1};
+        store_entries[i] = INVALID_ENTRY;
       }
 
       int i_store_val = 0;
@@ -109,40 +119,49 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
           }
 
           if (idx_load_pipe_succ || is_load_waiting_for_val) {
-            bool is_in_flight = false;
+            is_load_waiting_for_val = false;
 
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
-              if (store_entries[i].idx == idx_load && store_entries[i].executed) {
-                is_in_flight |= true;
-                val_load = store_entries[i].val;
+              if (store_entries[i].idx == idx_load && store_entries[i].countdown > 0 &&
+                  store_entries[i].tag < i_load) {
+                // The forward_candidates.forward field corresponds to store_entries.executed.
+                forward_candidates[i] = {store_entries[i].tag, store_entries[i].executed};
               }
-              else if (store_entries[i].idx == idx_load && !store_entries[i].executed) {
-                is_load_waiting_for_val |= true;
+              else {
+                forward_candidates[i] = {-1, false};
               }
             }
 
-            if (!is_in_flight && !is_load_waiting_for_val) {
+            int max_tag = -1;
+            #pragma unroll
+            for (uint i=0; i<STORE_Q_SIZE; ++i) {
+              max_tag = max(max_tag, forward_candidates[i].tag);
+            }
+
+            if (max_tag >= 0) {
+              is_load_waiting_for_val = true;
+              #pragma unroll
+              for (uint i=0; i<STORE_Q_SIZE; ++i) {
+                if (max_tag == forward_candidates[i].tag && forward_candidates[i].forward) {
+                  val_load = store_entries[i].val;
+                  is_load_waiting_for_val = false;
+                }
+              }
+            }
+            else {
               val_load = PipelinedLSU::load(hist.get_pointer() + idx_load);
             }
 
             if (!is_load_waiting_for_val) {
               val_load_pipe::write(val_load, val_load_pipe_write_succ);
-              if (val_load_pipe_write_succ) {
-                i_load++;
-              }
+              if (val_load_pipe_write_succ) i_load++;
             }
           }
         }
         else if (i_load < array_size && i_load <= i_store_idx && !val_load_pipe_write_succ) {
-          // TODO: is this needed?
-          if (!val_load_pipe_write_succ && !is_load_waiting_for_val) {
-            val_load_pipe::write(val_load, val_load_pipe_write_succ);
-            if (val_load_pipe_write_succ) {
-              i_load++;
-            }
-            is_load_waiting_for_val = false;
-          }
+          val_load_pipe::write(val_load, val_load_pipe_write_succ);
+          if (val_load_pipe_write_succ) i_load++;
         }
         /* End Load Logic */
       
@@ -151,7 +170,7 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         int next_entry_slot = -1;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          if (store_entries[i].executed) {
+          if (store_entries[i].executed && store_entries[i].countdown > 0) {
             store_entries[i].countdown--;
           }
 
@@ -166,9 +185,7 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         }
 
         if (idx_store_pipe_succ) {
-          store_entries[next_entry_slot].idx = idx_store;
-          store_entries[next_entry_slot].countdown = STORE_LATENCY;
-
+          store_entries[next_entry_slot] = {(int) idx_store, 1000, false, STORE_LATENCY, i_store_idx};
           store_idx_fifo[store_idx_fifo_head] = {next_entry_slot, idx_store};
 
           i_store_idx++;
@@ -182,9 +199,9 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
 
         if (val_store_pipe_succ) {
           auto entry_store_idx_pair = store_idx_fifo[0];           
+          PipelinedLSU::store(hist.get_pointer() + entry_store_idx_pair.store_idx, val_store);
           store_entries[entry_store_idx_pair.queue_idx].val = val_store;
           store_entries[entry_store_idx_pair.queue_idx].executed = true;
-          PipelinedLSU::store(hist.get_pointer() + entry_store_idx_pair.store_idx, val_store);
 
           #pragma unroll
           for (uint i=1; i<STORE_Q_SIZE; ++i) {
@@ -198,7 +215,7 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
       }
 
       // TODO: do we need to wait for the last store to commit? Probably not..
-      // atomic_fence(memory_order_seq_cst, memory_scope_device);
+      atomic_fence(memory_order_seq_cst, memory_scope_device);
 
     });
   });
