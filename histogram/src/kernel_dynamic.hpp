@@ -15,7 +15,7 @@ using namespace sycl;
 using PipelinedLSU = ext::intel::lsu<>;
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 23;
+constexpr uint STORE_LATENCY = 16; // This should be gotten from static analysis.
 
 
 struct store_entry {
@@ -154,12 +154,12 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
             }
 
             if (!is_load_waiting_for_val) {
-              val_load_pipe::write(val_load, val_load_pipe_write_succ);
-              if (val_load_pipe_write_succ) i_load++;
+              val_load_pipe_write_succ = false;
             }
           }
         }
-        else if (i_load < array_size && i_load <= i_store_idx && !val_load_pipe_write_succ) {
+        
+        if (i_load < array_size && i_load <= i_store_idx && !val_load_pipe_write_succ) {
           val_load_pipe::write(val_load, val_load_pipe_write_succ);
           if (val_load_pipe_write_succ) i_load++;
         }
