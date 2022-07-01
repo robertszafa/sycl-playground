@@ -7,14 +7,14 @@ Q_SIZE := 1
 endif
 
 ifndef N_POINTS
-N_POINTS := 8
+N_POINTS := 4
 endif
 
 # For Pipe Array headers, etc
 # INC := /home/rob/git/oneAPI-samples/DirectProgramming/DPC++FPGA/include
 
 SRC := src/main.cpp
-HDR := src/kernel_$(KERNEL).hpp
+HDR := src/kernel_$(KERNEL).hpp src/common.hpp
 BIN := bin/delaunay_triang_$(KERNEL)_$(N_POINTS)points
 
 ifeq ($(KERNEL), dynamic)

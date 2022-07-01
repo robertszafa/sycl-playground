@@ -17,8 +17,20 @@ using namespace sycl;
 
 template <typename T>
 void init_data(std::vector<Point<T>> &points) {
-  for (int i = 0; i < points.size(); i++) {
-    points[i] = Point<T> {i + 1.0, i - 1.0};
+  if (points.size() == 4) {
+    points[0] = Point<T> {-1.0, 0.0};
+    points[1] = Point<T> {1.0, 0.0};
+    points[2] = Point<T> {0.0, 1.0};
+    points[2] = Point<T> {0.0, -1.0};
+  }
+  else {
+    for (int i = 0; i < points.size(); i++) {
+      points[i] = Point<T> {T(rand() % MAX_X), T(rand() % MAX_Y)};
+
+      if (points.size() < 10) {
+        std::cout << "[" << points[i].x << ", " << points[i].y << "],\n";
+      }
+    }
   }
 }
 

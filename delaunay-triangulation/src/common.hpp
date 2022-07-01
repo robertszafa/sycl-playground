@@ -4,13 +4,20 @@
 #include <iostream>
 #include <vector>
 
+#include <CL/sycl.hpp>
+#include <sycl/ext/intel/fpga_extensions.hpp>
+
+#define sycl_print sycl::ext::oneapi::experimental::printf
 
 constexpr double eps = 1e-4;
 
 constexpr uint MAX_POINTS = 200;
 
+constexpr uint MAX_X = 10;
+constexpr uint MAX_Y = 10;
+
 #ifndef N_POINTS
-constexpr uint num_points = 8;
+constexpr uint num_points = 4;
 #else
 constexpr uint num_points = N_POINTS;
 #endif
@@ -29,8 +36,12 @@ struct Point {
 
   friend std::ostream& operator<<(std::ostream& os, const Point<T>& p)
   {
-    os << "x=" << p.x << "  y=" << p.y;
+    os << "x=" << T(p.x) << "  y=" << T(p.y);
     return os;
+  }
+
+  void debug() const {
+    sycl_print("(%f, %f)", x, y); 
   }
 
   bool operator==(const Point<T>& other) const
@@ -56,6 +67,14 @@ struct Edge {
   {
     os << "p0: [" << e.p0 << " ] p1: [" << e.p1 << "]";
     return os;
+  }
+  
+  void debug() const {
+    sycl_print("["); 
+    p0.debug();
+    sycl_print(","); 
+    p1.debug();
+    sycl_print("]\n"); 
   }
 
   bool operator==(const Edge& other) const
@@ -113,6 +132,13 @@ struct Triangle {
     const auto dy = p0.y - circle.y;
     circle.radius = dx * dx + dy * dy;
   }
+
+  friend std::ostream& operator<<(std::ostream& os, const Triangle& e)
+  {
+    os << "p0: [" << e.p0 << " ] p1: [" << e.p1 << "] p2: [" << e.p2 << "]";
+    return os;
+  }
+
 };
 
 template <typename T>
@@ -121,8 +147,29 @@ struct Delaunay {
   std::vector<Edge<T>> edges;
 
   Delaunay(const uint n_points)
-    : triangles(std::vector<Triangle<T>>(n_points*9)),
-      edges(std::vector<Edge<T>>(n_points*9))
+    : triangles(std::vector<Triangle<T>>(n_points*3)),
+      edges(std::vector<Edge<T>>(n_points*3*3))
   {}
+
   
 };
+
+
+template<typename T>
+bool almost_equal(T x, T y)
+{
+	return fabs(x-y) <= eps * fabs(x+y) || fabs(x-y) < eps;
+}
+
+template<typename T>
+bool almost_equal(const Point<T> &v1, const Point<T> &v2)
+{
+	return almost_equal(v1.x, v2.x) && almost_equal(v1.y, v2.y);
+}
+
+template<typename T>
+bool almost_equal(const Edge<T> &e1, const Edge<T> &e2)
+{
+	return	(almost_equal(e1.p0, e2.p0) && almost_equal(e1.p1, e2.p1)) ||
+          (almost_equal(e1.p0, e2.p1) && almost_equal(e1.p1, e2.p0));
+}
