@@ -16,11 +16,6 @@ constexpr uint MAX_POINTS = 200;
 constexpr uint MAX_X = 10;
 constexpr uint MAX_Y = 10;
 
-#ifndef N_POINTS
-constexpr uint num_points = 4;
-#else
-constexpr uint num_points = N_POINTS;
-#endif
 
 template <typename T>
 struct Point {

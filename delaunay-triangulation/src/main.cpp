@@ -34,6 +34,15 @@ void init_data(std::vector<Point<T>> &points) {
   }
 }
 
+bool tryParse(std::string& input, uint& output) {
+    try{
+        output = std::stoi(input);
+    } catch (std::invalid_argument) {
+        return false;
+    }
+    return true;
+}
+
 // Create an exception handler for asynchronous SYCL exceptions
 static auto exception_handler = [](sycl::exception_list e_list) {
   for (std::exception_ptr const &e : e_list) {
@@ -63,11 +72,22 @@ int main(int argc, char *argv[]) {
   default_selector d_selector;
 #endif
 
-  try {
+  try {    
     // Enable profiling.
     property_list properties{property::queue::enable_profiling()};
     queue q(d_selector, exception_handler, properties);
     queue q2(d_selector, exception_handler, properties);
+
+    std::string input;
+    uint x;
+    std::cout << "Enter number of points: ";
+    getline(std::cin, input);
+    while (!tryParse(input, x))
+    {
+        std::cout << "Bad entry. Enter a NUMBER: ";
+        getline(std::cin, input);
+    }
+    const int num_points = x;
 
     // Print out the device information used for the kernel code.
     std::cout << "Running on device: " << q.get_device().get_info<info::device::name>() << "\n";

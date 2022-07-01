@@ -21,7 +21,7 @@ using PipelinedLSU = ext::intel::lsu<>;
 template<typename T>
 double delaunay_triang_kernel(queue &q, const std::vector<Point<T>> &points, 
                                         const Delaunay<T> d) {
-  std::cout << "Static HLS\n";
+  std::cout << "Dynamic HLS\n";
 
   const uint num_points = points.size();
 

@@ -6,24 +6,20 @@ ifndef Q_SIZE
 Q_SIZE := 1
 endif
 
-ifndef N_POINTS
-N_POINTS := 4
-endif
-
 # For Pipe Array headers, etc
 # INC := /home/rob/git/oneAPI-samples/DirectProgramming/DPC++FPGA/include
 
 SRC := src/main.cpp
 HDR := src/kernel_$(KERNEL).hpp src/common.hpp
-BIN := bin/delaunay_triang_$(KERNEL)_$(N_POINTS)points
+BIN := bin/delaunay_triang_$(KERNEL)
 
 ifeq ($(KERNEL), dynamic)
-	BIN := bin/delaunay_triang_$(KERNEL)_$(Q_SIZE)qsize_$(N_POINTS)points
+	BIN := bin/delaunay_triang_$(KERNEL)_$(Q_SIZE)qsize
 endif
 
 
 CXX := dpcpp
-CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE) -DN_POINTS=$(N_POINTS)
+CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE)
 # CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
 # CXXFLAGS += -Xsghdl
