@@ -60,12 +60,12 @@ int main(int argc, char *argv[]) {
     // Print out the device information used for the kernel code.
     std::cout << "Running on device: " << q.get_device().get_info<info::device::name>() << "\n";
 
-    std::cout << "Array size = " << NUM_POINTS << "\n";
+    std::cout << "Array size = " << num_points << "\n";
 
     // host data
     // inputs
-    std::vector<Point<float>> points(NUM_POINTS);
-    auto d = Delaunay<float>(NUM_POINTS);
+    std::vector<Point<float>> points(num_points);
+    auto d = Delaunay<float>(num_points);
 
     init_data(points);
 

@@ -7,7 +7,13 @@
 
 constexpr double eps = 1e-4;
 
-constexpr uint NUM_POINTS = N_POINTS;
+constexpr uint MAX_POINTS = 200;
+
+#ifndef N_POINTS
+constexpr uint num_points = 8;
+#else
+constexpr uint num_points = N_POINTS;
+#endif
 
 template <typename T>
 struct Point {
