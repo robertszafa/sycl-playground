@@ -1,4 +1,5 @@
 #include <CL/sycl.hpp>
+#include <algorithm>
 #include <iostream>
 #include <numeric>
 #include <vector>
@@ -28,12 +29,12 @@ static auto exception_handler = [](sycl::exception_list e_list) {
   }
 };
 
-void init_data(std::vector<float> &matrix,  std::vector<float> &vec, std::vector<int> &col_index, 
+void init_data(std::vector<float> &matrix,  std::vector<float> &a, std::vector<int> &col_index, 
                std::vector<int> &row_ptr,  const uint M) {
   for (int r = 0; r < M; ++r) {
     col_index[r] = r % 2;
     row_ptr[r] = (r + 8) % 4;
-    vec[r] = float(1);
+    a[r] = float(1);
 
     for (int c = 0; c < M; ++c) {
       matrix[r * M + c] = 1;
@@ -62,6 +63,15 @@ uint dense2sparse(const std::vector<float> &matrix, std::vector<int> &col_index,
   return nz;
 }
 
+void spmv_cpu(std::vector<float> &matrix, const std::vector<int> &row, const std::vector<int> &col,
+              std::vector<float> &a, const int M) {
+  for (int k = 1; k < M; k++) {
+    for (int p = 0; p < M; p++) {
+      matrix[k * M + row[p]] += a[p] * matrix[(k - 1) * M + col[p]];
+    }
+  }
+}
+
 int main(int argc, char *argv[]) {
   // Create device selector for the device of your interest.
 #if FPGA_EMULATOR
@@ -88,30 +98,30 @@ int main(int argc, char *argv[]) {
     const int M = M_SIZE;
 
     std::vector<float> matrix(M * M);
-    std::vector<float> vec(M);
+    std::vector<float> golden_matrix(M * M);
+    std::vector<float> a(M);
 
     std::vector<int> row_ptr(M);
     std::vector<int> col_index(M);
 
-    init_data(matrix, vec, col_index, row_ptr, M);
-    // const uint nz = dense2sparse(matrix, col_index, row_ptr, M);
+    init_data(matrix, a, col_index, row_ptr, M);
+    std::copy(matrix.begin(), matrix.end(), golden_matrix.begin());
+    spmv_cpu(golden_matrix, row_ptr, col_index, a, M);
 
-    auto start = std::chrono::steady_clock::now();
-    double kernel_time = 0;
-
-    spmv_kernel(q, matrix, row_ptr, col_index, vec, M);
+    auto kernel_time = spmv_kernel(q, matrix, row_ptr, col_index, a, M);
 
     // Wait for all work to finish.
     q.wait();
 
-    auto stop = std::chrono::steady_clock::now();
-    double total_time = (std::chrono::duration<double>(stop - start)).count() * 1000.0;
-
     std::cout << "Kernel time (ms): " << kernel_time << "\n";
-    float sum = std::accumulate(matrix.begin(), matrix.end(), 0.0);
-    std::cout << "Sum = " << sum << "\n";
 
-    // std::cout << "Total time (ms): " << total_time << "\n";
+    if (std::equal(matrix.begin(), matrix.end(), golden_matrix.begin())) {
+      std::cout << "Passed\n";
+    }
+    else {
+      std::cerr << "Failed\n";
+    }
+
   } catch (exception const &e) {
     std::cout << "An exception was caught.\n";
     std::terminate();

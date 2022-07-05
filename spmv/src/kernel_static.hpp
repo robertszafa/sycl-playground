@@ -11,14 +11,14 @@
 
 using namespace sycl;
 
-using PipelinedLSU = ext::intel::lsu<>;
-
 double spmv_kernel(queue &q, 
                    std::vector<float> &matrix,       
                    const std::vector<int> &row,
                    const std::vector<int> &col,
                    std::vector<float> &a,             
                    const int M) {
+
+  std::cout << "Static HLS\n";
 
   buffer matrix_buf(matrix);
   buffer row_buf(row);
@@ -34,8 +34,7 @@ double spmv_kernel(queue &q,
     hnd.single_task<class spmv_static>([=]() [[intel::kernel_args_restrict]] {
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
-          auto new_val = matrix[k*M + row[p]] + a[p] * matrix[(k - 1) * M + col[p]];
-          PipelinedLSU::store(matrix.get_pointer() + (k*M + row[p]), new_val);
+          matrix[k*M + row[p]] += a[p] * matrix[(k - 1) * M + col[p]];
         }
       }
     });

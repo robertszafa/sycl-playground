@@ -10,11 +10,12 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 using namespace sycl;
+#define sycl_print sycl::ext::oneapi::experimental::printf
 
 using PipelinedLSU = ext::intel::lsu<>;
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 72; // This should be gotten from static analysis.
+constexpr uint STORE_LATENCY = 16; // This should be gotten from static analysis.
 
 
 struct store_entry {
@@ -25,11 +26,22 @@ struct store_entry {
   int tag;
 };
 
+struct load_entry {
+  int idx; // This should be the full address in a real impl.
+  int tag;
+  bool consumer; 
+};
+
 constexpr store_entry INVALID_ENTRY = {-1, 0, false, -1, -1};
 
 struct pair {
   int fst; 
   int snd; 
+};
+struct triple {
+  int fst; 
+  int snd; 
+  int thrd; 
 };
 
 struct candidate {
@@ -55,162 +67,64 @@ double spmv_kernel(queue &q,
   buffer col_buf(col);
   buffer a_buf(a);
 
-  using idx_load_1_pipe = pipe<class idx_load_1_pipe_class, pair, 128>;
-  using idx_load_2_pipe = pipe<class idx_load_2_pipe_class, pair, 128>;
-  using val_load_1_pipe = pipe<class val_load_1_pipe_class, float, 128>;
-  using val_load_2_pipe = pipe<class val_load_2_pipe_class, float, 128>;
+  using idx_load_1_pipe = pipe<class idx_load_1_pipe_class, pair, 64>;
+  using idx_load_2_pipe = pipe<class idx_load_2_pipe_class, pair, 64>;
+  using idx_load_pipe = pipe<class idx_load_pipe_class, triple, 64>;
+  using val_load_1_pipe = pipe<class val_load_1_pipe_class, float, 64>;
+  using val_load_2_pipe = pipe<class val_load_2_pipe_class, float, 64>;
   using idx_store_pipe = pipe<class idx_store_pipe_class, pair, 64>;
   using val_store_pipe = pipe<class val_store_pipe_class, float, 64>;
 
-  using idx_load_pipe = pipe<class idx_load_pipe_class, pair, 64>;
-  using val_load_pipe = pipe<class val_load_pipe_class, float, 64>;
-  using ctrl_load_pipe = pipe<class ctrl_load_pipe_class, bool, 64>;
   using ld_a_pipe = pipe<class ld_a_class, float, 64>;
 
-  using end_lsq_signal_pipe = pipe<class end_lsq_signal_class, bool, 64>;
+  using end_lsq_signal_pipe = pipe<class end_lsq_signal_class, bool>;
   
-  using predicate_pick_signal_pipe = pipe<class predicate_pick_signal_class, bool, 64>;
-  using predicate_switch_signal_pipe = pipe<class predicate_switch_signal_class, bool, 64>;
 
-  using predicate_gen_idxs_pipe = pipe<class predicate_gen_idxs_class, bool, 64>;
-  using predicate_calc_pipe = pipe<class predicate_calc_class, bool, 64>;
-  
+  q.submit([&](handler &hnd) {
+    accessor a(a_buf, hnd, read_only);
+
+    hnd.single_task<class LoadA>([=]() [[intel::kernel_args_restrict]] {
+      for (int k = 1; k < M; k++) {
+        for (int p = 0; p < M; p++) {
+          ld_a_pipe::write(a[p]);
+        }
+      }
+    });
+  });
 
   q.submit([&](handler &hnd) {
     accessor row(row_buf, hnd, read_only);
     accessor col(col_buf, hnd, read_only);
-    accessor a(a_buf, hnd, read_only);
 
-    hnd.single_task<class seq>([=]() [[intel::kernel_args_restrict]] {
+    hnd.single_task<class LoadIdxs>([=]() [[intel::kernel_args_restrict]] {
       int tag = 0;
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           auto load_idx_1 = (k - 1) * M + col[p];
           auto load_idx_2 = k * M + row[p];
-          auto store_idx = k * M + row[p];
 
-          idx_load_1_pipe::write({load_idx_1, tag});
-          idx_load_2_pipe::write({load_idx_2, tag});
-          idx_store_pipe::write({store_idx, tag});
-          ld_a_pipe::write(a[p]);
-
-          predicate_pick_signal_pipe::write(1); 
-          predicate_switch_signal_pipe::write(1); 
-          predicate_switch_signal_pipe::write(1); 
-          predicate_calc_pipe::write(1); 
+          idx_load_pipe::write({load_idx_1, tag, 0});
+          idx_load_pipe::write({load_idx_2, tag, 1});
 
           tag++;
         }
       }
-      // predicate_gen_idxs_pipe::write(0);
-      // predicate_ld_a_pipe::write(0);
-      predicate_pick_signal_pipe::write(0); 
-      predicate_switch_signal_pipe::write(0); 
-      predicate_calc_pipe::write(0); 
     });
   });
-
-  // q.submit([&](handler &hnd) {
-  //   accessor row(row_buf, hnd, read_only);
-  //   accessor col(col_buf, hnd, read_only);
-
-  //   hnd.single_task<class spmv_idxs>([=]() [[intel::kernel_args_restrict]] {
-  //     int tag = 0;
-
-  //     for (int k = 1; k < M; k++) {
-  //       for (int p = 0; p < M; p++) {
-  //         auto load_idx_1 = (k - 1) * M + col[p];
-  //         auto load_idx_2 = k * M + row[p];
-
-  //         predicate_pick_signal_pipe::write(true);
-  //         idx_load_1_pipe::write(pair {load_idx_1, tag});
-  //         idx_load_2_pipe::write(pair {load_idx_2, tag});
-  //         tag++;
-  //       }
-  //     }
-  //     predicate_pick_signal_pipe::write(false);
-  //   });
-  // });
-
-  // q.submit([&](handler &hnd) {
-  //   accessor row(row_buf, hnd, read_only);
-
-  //   hnd.single_task<class spmv_idxs_store>([=]() [[intel::kernel_args_restrict]] {
-  //     int tag = 0;
-
-  //     for (int k = 1; k < M; k++) {
-  //       for (int p = 0; p < M; p++) {
-  //         auto store_idx = k * M + row[p];
-  //         idx_store_pipe::write(pair {store_idx, tag});
-  //         tag++;
-  //       }
-  //     }
-  //   });
-  // });
 
   q.submit([&](handler &hnd) {
+    accessor row(row_buf, hnd, read_only);
 
-    hnd.single_task<class switcher>([=]() [[intel::kernel_args_restrict]] {
-      while (predicate_switch_signal_pipe::read()) {
-        bool is_choose_1 = ctrl_load_pipe::read();
-        auto val = val_load_pipe::read();
-        
-        if (is_choose_1 == 1) {
-          val_load_1_pipe::write(val);
-        }
-        else {
-          val_load_2_pipe::write(val);
+    hnd.single_task<class StoreIdxs>([=]() [[intel::kernel_args_restrict]] {
+      int tag = 0;
+      for (int k = 1; k < M; k++) {
+        for (int p = 0; p < M; p++) {
+          auto store_idx = k * M + row[p];
+
+          idx_store_pipe::write({store_idx, tag});
+          tag++;
         }
       }
-    });
-  });
-  
-  q.submit([&](handler &hnd) {
-
-    hnd.single_task<class pick>([=]() [[intel::kernel_args_restrict]] {
-      pair pair_1;
-      pair pair_2;
-      while (predicate_pick_signal_pipe::read()) {
-        // predicate_switch_signal_pipe::write(true);
-
-        auto ld_1_pair = idx_load_1_pipe::read();
-        auto ld_2_pair = idx_load_2_pipe::read();
-
-        auto is_choose_1 = (ld_1_pair.snd <= ld_2_pair.snd);
-        if (is_choose_1) {
-          pair_1 = ld_1_pair;
-          pair_2 = ld_2_pair;
-        }
-        else {
-          pair_1 = ld_2_pair;
-          pair_2 = ld_1_pair;
-        }
-
-        idx_load_pipe::write(pair_1);
-        ctrl_load_pipe::write(is_choose_1);
-        idx_load_pipe::write(pair_2);
-        ctrl_load_pipe::write(!is_choose_1);
-      }
-    });
-  });
-
-  auto event = q.submit([&](handler &hnd) {
-    accessor a(a_buf, hnd, read_only);
-
-    hnd.single_task<class spmv_dynamic>([=]() [[intel::kernel_args_restrict]] {
-      while(predicate_calc_pipe::read()) {
-        ext::oneapi::experimental::printf("Loop\n");
-
-        auto load_x_1 = val_load_1_pipe::read(); // matrix[(k - 1) * M + col[p]];
-        auto load_x_2 = val_load_2_pipe::read(); // matrix[k*M + row[p]];
-        auto load_a = ld_a_pipe::read();
-
-        auto store_x = load_x_2 + load_a * load_x_1;
-        
-        val_store_pipe::write(store_x);
-      }
-
-      end_lsq_signal_pipe::write(true);
     });
   });
 
@@ -232,37 +146,36 @@ double spmv_kernel(queue &q,
 
       int i_store_val = 0;
       int i_store_idx = 0;
-
-      int idx_load_1, idx_load_2, idx_store;
-      int idx_load, tag_load; 
-      int tag_load_1, tag_load_2, tag_store;
-      float val_load_1, val_load_2, val_store, val_load;
       int store_idx_fifo_head = 0;
+
+      int idx_load_1, idx_load_2, idx_store, idx_load; 
+      float val_store, val_load;
+      bool consumer_id_load;
+      int tag_load = 0; 
+      int tag_store = 0;
 
       bool val_load_pipe_write_succ = true;
       bool is_load_waiting_for_val = false;
-      // bool val_load_2_pipe_write_succ = true;
-      // bool is_load_1_waiting_for_val = false;
-      // bool is_load_2_waiting_for_val = false;
-
-      // We have two (N in the general case) load requests which are served in round robin.
-      // bool load_flag = false;
+      bool is_load_waiting_for_store_idx = false;
 
       bool end_signal = false;
 
       [[intel::ivdep]] 
-      while (!end_signal) {
+      while (!end_signal || i_store_idx < i_store_val) {
         /* Start Load Logic */
         if (val_load_pipe_write_succ) {
           bool idx_load_pipe_succ = false;
 
-          if (!is_load_waiting_for_val) {
-            auto idx_tag_pair = idx_load_pipe::read(idx_load_pipe_succ);
-            idx_load = idx_tag_pair.fst;
-            tag_load = idx_tag_pair.snd;
+          is_load_waiting_for_store_idx = (tag_load > tag_store);
+
+          if (!is_load_waiting_for_val && !is_load_waiting_for_store_idx) {
+            auto idx_tag_consumer = idx_load_pipe::read(idx_load_pipe_succ);
+            idx_load = idx_tag_consumer.fst;
+            tag_load = idx_tag_consumer.snd;
+            consumer_id_load = idx_tag_consumer.thrd;
           }
 
-          if (idx_load_pipe_succ || is_load_waiting_for_val) {
+          if (!is_load_waiting_for_store_idx && (idx_load_pipe_succ || is_load_waiting_for_val)) {
             is_load_waiting_for_val = false;
 
             #pragma unroll
@@ -304,7 +217,10 @@ double spmv_kernel(queue &q,
         }
 
         if (!val_load_pipe_write_succ) {
-          val_load_pipe::write(val_load, val_load_pipe_write_succ);
+          if (consumer_id_load == 0)
+            val_load_1_pipe::write(val_load, val_load_pipe_write_succ);
+          else
+            val_load_2_pipe::write(val_load, val_load_pipe_write_succ);
         }
         /* End Load Logic */
       
@@ -362,13 +278,27 @@ double spmv_kernel(queue &q,
           end_lsq_signal_pipe::read(end_signal);
       }
 
-      ext::oneapi::experimental::printf("Finished LSQ\n");
-      // TODO: do we need to wait for the last store to commit? Probably not..
-      // atomic_fence(memory_order_seq_cst, memory_scope_device);
-
+      // sycl_print("Finished LSQ\n");
     });
   });
 
+  auto event = q.submit([&](handler &hnd) {
+    hnd.single_task<class spmv_dynamic>([=]() [[intel::kernel_args_restrict]] {
+      for (int k = 1; k < M; k++) {
+        for (int p = 0; p < M; p++) {
+          auto load_a = ld_a_pipe::read();
+          auto load_x_1 = val_load_1_pipe::read(); // matrix[(k - 1) * M + col[p]];
+          auto load_x_2 = val_load_2_pipe::read(); // matrix[k*M + row[p]];
+
+          auto store_x = load_x_2 + load_a * load_x_1;
+          
+          val_store_pipe::write(store_x);
+        }
+      }
+
+      end_lsq_signal_pipe::write(true);
+    });
+  });
 
   auto start = event.get_profiling_info<info::event_profiling::command_start>();
   auto end = event.get_profiling_info<info::event_profiling::command_end>();
