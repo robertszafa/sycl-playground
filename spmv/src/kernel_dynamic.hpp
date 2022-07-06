@@ -170,18 +170,18 @@ double spmv_kernel(queue &q,
       // A FIFO of {idx_into_store_q, tag} pairs to pick the youngest store from the store entries.
       [[intel::fpga_register]] candidate forward_candidates[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, idx_into_x} pairs.
-      // [[intel::fpga_register]] pair store_idx_fifo[STORE_Q_SIZE];
+      [[intel::fpga_register]] pair store_idx_fifo[STORE_Q_SIZE];
 
       // All entries are invalid at the start.
-      #pragma unroll
-      for (uint i=0; i<STORE_Q_SIZE; ++i) {
-        store_entries[i] = INVALID_ENTRY;
-      }
+      // #pragma unroll
+      // for (uint i=0; i<STORE_Q_SIZE; ++i) {
+      //   store_entries[i] = INVALID_ENTRY;
+      // }
 
       int i_store_val = 0;
       int i_store_idx = 0;
       int store_idx_fifo_head = 0;
-      int store_entry_fifo_head = 0;
+      // int entries_fifo_head = 0;
 
       int idx_load_1, idx_load_2, idx_store, idx_load; 
       float val_store, val_load;
@@ -214,35 +214,19 @@ double spmv_kernel(queue &q,
           if (idx_load_pipe_succ || is_load_waiting_for_val) {
             is_load_waiting_for_val = false;
 
-            #pragma unroll
-            for (uint i=0; i<STORE_Q_SIZE; ++i) {
-              if (store_entries[i].idx == idx_load && store_entries[i].countdown > 0 &&
-                  store_entries[i].tag < tag_load) {
-                // The forward_candidates.forward field corresponds to store_entries.executed.
-                forward_candidates[i] = {store_entries[i].tag, store_entries[i].executed};
-              }
-              else {
-                forward_candidates[i] = {-1, false};
-              }
-            }
-
             int max_tag = -1;
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
-              max_tag = max(max_tag, forward_candidates[i].tag);
-            }
-
-            if (max_tag >= 0) {
-              is_load_waiting_for_val = true;
-              #pragma unroll
-              for (uint i=0; i<STORE_Q_SIZE; ++i) {
-                if (max_tag == forward_candidates[i].tag && forward_candidates[i].forward) {
-                  val_load = store_entries[i].val;
-                  is_load_waiting_for_val = false;
-                }
+              auto st_entry = store_entries[i];
+              if (st_entry.idx == idx_load && st_entry.countdown > 0 &&
+                  st_entry.tag < tag_load && st_entry.tag > max_tag) {
+                max_tag = st_entry.tag;
+                is_load_waiting_for_val = !st_entry.executed;
+                val_load = st_entry.val;
               }
             }
-            else {
+
+            if (max_tag == -1) {
               val_load = PipelinedLSU::load(matrix.get_pointer() + idx_load);
             }
 
@@ -259,36 +243,32 @@ double spmv_kernel(queue &q,
       
 
         /* Start Store Logic */
-        if (store_entries[0].executed && store_entries[0].countdown <= 0) {
-          #pragma unroll
-          for (uint i=1; i<STORE_Q_SIZE; ++i) {
-            store_entries[i-1] = store_entries[i];
-          }
-          store_idx_fifo_head--;
-          store_entry_fifo_head--;
-        }
+        int next_entry_slot = -1;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          if (store_entries[i].countdown > 0) {
+          if (store_entries[i].executed && store_entries[i].countdown > 0) {
             store_entries[i].countdown--;
+          }
+
+          if (store_entries[i].countdown <= 0) {
+            next_entry_slot = i;
           }
         }
 
         bool idx_store_pipe_succ = false;
-        if (store_idx_fifo_head < STORE_Q_SIZE) {
+        if (next_entry_slot != -1 && store_idx_fifo_head < STORE_Q_SIZE) {
           auto idx_tag_pair = idx_store_pipe::read(idx_store_pipe_succ);
           idx_store = idx_tag_pair.fst;
           tag_store = idx_tag_pair.snd;
-
-          if (idx_store_pipe_succ) {
-            store_entries[store_entry_fifo_head] = {(int) idx_store, 1000, false, STORE_LATENCY, tag_store};
-
-            i_store_idx++;
-            store_idx_fifo_head++;
-            // store_entry_fifo_head++;
-          }
         }
 
+        if (idx_store_pipe_succ) {
+          store_entries[next_entry_slot] = {(int) idx_store, 1000, false, STORE_LATENCY, tag_store};
+          store_idx_fifo[store_idx_fifo_head] = {next_entry_slot, idx_store};
+
+          i_store_idx++;
+          store_idx_fifo_head++;
+        }
         
         bool val_store_pipe_succ = false;
         if (i_store_idx > i_store_val) {
@@ -296,12 +276,16 @@ double spmv_kernel(queue &q,
         }
 
         if (val_store_pipe_succ) {
-          // auto entry_slot_and_idx_pair = sto[0];           
-          store_entries[store_entry_fifo_head].val = val_store;
-          store_entries[store_entry_fifo_head].executed = true;
-          PipelinedLSU::store(matrix.get_pointer() + store_entries[0].idx, val_store);
+          auto entry_slot_and_idx_pair = store_idx_fifo[0];           
+          PipelinedLSU::store(matrix.get_pointer() + entry_slot_and_idx_pair.snd, val_store);
+          store_entries[entry_slot_and_idx_pair.fst].val = val_store;
+          store_entries[entry_slot_and_idx_pair.fst].executed = true;
 
-          store_entry_fifo_head++;
+          #pragma unroll
+          for (uint i=1; i<STORE_Q_SIZE; ++i) {
+            store_idx_fifo[i-1] = store_idx_fifo[i];
+          }
+          store_idx_fifo_head--;
 
           i_store_val++;
         }
