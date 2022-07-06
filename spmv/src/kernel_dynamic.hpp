@@ -5,6 +5,7 @@
 #include <CL/sycl.hpp>
 #include <cstdio>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
@@ -15,7 +16,7 @@ using namespace sycl;
 using PipelinedLSU = ext::intel::lsu<>;
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 16; // This should be gotten from static analysis.
+constexpr uint STORE_LATENCY = 8; // This should be gotten from static analysis.
 
 
 struct store_entry {
@@ -67,17 +68,19 @@ double spmv_kernel(queue &q,
   buffer col_buf(col);
   buffer a_buf(a);
 
-  using idx_load_1_pipe = pipe<class idx_load_1_pipe_class, pair, 64>;
-  using idx_load_2_pipe = pipe<class idx_load_2_pipe_class, pair, 64>;
+  using idx_load_1_pipe = pipe<class idx_load_1_pipe_class, triple, 32>;
+  using idx_load_2_pipe = pipe<class idx_load_2_pipe_class, triple, 32>;
   using idx_load_pipe = pipe<class idx_load_pipe_class, triple, 64>;
-  using val_load_1_pipe = pipe<class val_load_1_pipe_class, float, 64>;
-  using val_load_2_pipe = pipe<class val_load_2_pipe_class, float, 64>;
-  using idx_store_pipe = pipe<class idx_store_pipe_class, pair, 64>;
-  using val_store_pipe = pipe<class val_store_pipe_class, float, 64>;
+  using val_load_1_pipe = pipe<class val_load_1_pipe_class, float, 32>;
+  using val_load_2_pipe = pipe<class val_load_2_pipe_class, float, 32>;
+  using idx_store_pipe = pipe<class idx_store_pipe_class, pair, 32>;
+  using val_store_pipe = pipe<class val_store_pipe_class, float, 32>;
 
-  using ld_a_pipe = pipe<class ld_a_class, float, 64>;
+  using ld_a_pipe = pipe<class ld_a_class, float, 32>;
 
   using end_lsq_signal_pipe = pipe<class end_lsq_signal_class, bool>;
+  
+  using merge_ctrl_pipe = pipe<class merge_ctrl_class, bool, 32>;
   
 
   q.submit([&](handler &hnd) {
@@ -103,10 +106,41 @@ double spmv_kernel(queue &q,
           auto load_idx_1 = (k - 1) * M + col[p];
           auto load_idx_2 = k * M + row[p];
 
-          idx_load_pipe::write({load_idx_1, tag, 0});
-          idx_load_pipe::write({load_idx_2, tag, 1});
+          idx_load_1_pipe::write({load_idx_1, tag, 0});
+          idx_load_2_pipe::write({load_idx_2, tag, 1});
 
           tag++;
+        }
+      }
+    });
+  });
+
+  q.submit([&](handler &hnd) {
+    hnd.single_task<class MergeCtrl>([=]() [[intel::kernel_args_restrict]] {
+      for (int k = 1; k < M; k++) {
+        for (int p = 0; p < M; p++) {
+          for (int i = 0; i < 2; i++) {
+            auto res = (i % 2);
+            merge_ctrl_pipe::write(res);
+          }
+        }
+      }
+    });
+  });
+
+  q.submit([&](handler &hnd) {
+    hnd.single_task<class Merge>([=]() [[intel::kernel_args_restrict]] {
+      for (int k = 1; k < M; k++) {
+        for (int p = 0; p < M; p++) {
+          for (int i = 0; i < 2; i++) {
+            auto ctrl = merge_ctrl_pipe::read();
+
+            if (ctrl == 0) {
+              idx_load_pipe::write(idx_load_1_pipe::read());
+            } else {
+              idx_load_pipe::write(idx_load_2_pipe::read());
+            }
+          }
         }
       }
     });
@@ -160,22 +194,23 @@ double spmv_kernel(queue &q,
 
       bool end_signal = false;
 
+      // int total_stores = -1;
+
       [[intel::ivdep]] 
-      while (!end_signal || i_store_idx < i_store_val) {
+      while (!end_signal || i_store_idx > i_store_val) {
+        // sycl_print("tag_load %d  tag_store %d", tag_load, tag_store);
         /* Start Load Logic */
-        if (val_load_pipe_write_succ) {
+        if (tag_load <= tag_store && val_load_pipe_write_succ) {
           bool idx_load_pipe_succ = false;
 
-          is_load_waiting_for_store_idx = (tag_load > tag_store);
-
-          if (!is_load_waiting_for_val && !is_load_waiting_for_store_idx) {
+          if (!is_load_waiting_for_val && val_load_pipe_write_succ) {
             auto idx_tag_consumer = idx_load_pipe::read(idx_load_pipe_succ);
             idx_load = idx_tag_consumer.fst;
             tag_load = idx_tag_consumer.snd;
             consumer_id_load = idx_tag_consumer.thrd;
           }
 
-          if (!is_load_waiting_for_store_idx && (idx_load_pipe_succ || is_load_waiting_for_val)) {
+          if (idx_load_pipe_succ || is_load_waiting_for_val) {
             is_load_waiting_for_val = false;
 
             #pragma unroll
@@ -210,12 +245,9 @@ double spmv_kernel(queue &q,
               val_load = PipelinedLSU::load(matrix.get_pointer() + idx_load);
             }
 
-            if (!is_load_waiting_for_val) {
-              val_load_pipe_write_succ = false;
-            }
+            val_load_pipe_write_succ = is_load_waiting_for_val;
           }
         }
-
         if (!val_load_pipe_write_succ) {
           if (consumer_id_load == 0)
             val_load_1_pipe::write(val_load, val_load_pipe_write_succ);
@@ -276,6 +308,8 @@ double spmv_kernel(queue &q,
       
         if (!end_signal)
           end_lsq_signal_pipe::read(end_signal);
+
+        // sycl_print("-- end signal %d\n  total_stores %d  i_store_val %d\n", end_signal, total_stores, i_store_val);
       }
 
       // sycl_print("Finished LSQ\n");
@@ -286,9 +320,9 @@ double spmv_kernel(queue &q,
     hnd.single_task<class spmv_dynamic>([=]() [[intel::kernel_args_restrict]] {
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
-          auto load_a = ld_a_pipe::read();
           auto load_x_1 = val_load_1_pipe::read(); // matrix[(k - 1) * M + col[p]];
           auto load_x_2 = val_load_2_pipe::read(); // matrix[k*M + row[p]];
+          auto load_a = ld_a_pipe::read();
 
           auto store_x = load_x_2 + load_a * load_x_1;
           
@@ -296,7 +330,8 @@ double spmv_kernel(queue &q,
         }
       }
 
-      end_lsq_signal_pipe::write(true);
+      end_lsq_signal_pipe::write(1);
+      // sycl_print("END\n");
     });
   });
 
