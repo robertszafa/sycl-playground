@@ -62,25 +62,21 @@ double spmv_kernel(queue &q,
 
   std::cout << "Dynamic HLS\n";
 
-  // matrix will store A^i * matrix fir every i. The initial matrix will be at i=0.
   buffer matrix_buf(matrix);
   buffer row_buf(row);
   buffer col_buf(col);
   buffer a_buf(a);
 
-  using idx_load_1_pipe = pipe<class idx_load_1_pipe_class, triple, 32>;
-  using idx_load_2_pipe = pipe<class idx_load_2_pipe_class, triple, 32>;
-  using idx_load_pipe = pipe<class idx_load_pipe_class, triple, 64>;
-  using val_load_1_pipe = pipe<class val_load_1_pipe_class, float, 32>;
-  using val_load_2_pipe = pipe<class val_load_2_pipe_class, float, 32>;
-  using idx_store_pipe = pipe<class idx_store_pipe_class, pair, 32>;
-  using val_store_pipe = pipe<class val_store_pipe_class, float, 32>;
+  using idx_load_1_pipe = pipe<class idx_load_1_pipe_class, triple, 64>;
+  using idx_load_2_pipe = pipe<class idx_load_2_pipe_class, triple, 64>;
+  using val_load_1_pipe = pipe<class val_load_1_pipe_class, float, 64>;
+  using val_load_2_pipe = pipe<class val_load_2_pipe_class, float, 64>;
+  using idx_store_pipe = pipe<class idx_store_pipe_class, pair, 64>;
+  using val_store_pipe = pipe<class val_store_pipe_class, float, 64>;
 
-  using ld_a_pipe = pipe<class ld_a_class, float, 32>;
+  using ld_a_pipe = pipe<class ld_a_class, float, 64>;
 
   using end_lsq_signal_pipe = pipe<class end_lsq_signal_class, bool>;
-  
-  using merge_ctrl_pipe = pipe<class merge_ctrl_class, bool, 32>;
   
 
   q.submit([&](handler &hnd) {
@@ -116,37 +112,6 @@ double spmv_kernel(queue &q,
   });
 
   q.submit([&](handler &hnd) {
-    hnd.single_task<class MergeCtrl>([=]() [[intel::kernel_args_restrict]] {
-      for (int k = 1; k < M; k++) {
-        for (int p = 0; p < M; p++) {
-          for (int i = 0; i < 2; i++) {
-            auto res = (i % 2);
-            merge_ctrl_pipe::write(res);
-          }
-        }
-      }
-    });
-  });
-
-  q.submit([&](handler &hnd) {
-    hnd.single_task<class Merge>([=]() [[intel::kernel_args_restrict]] {
-      for (int k = 1; k < M; k++) {
-        for (int p = 0; p < M; p++) {
-          for (int i = 0; i < 2; i++) {
-            auto ctrl = merge_ctrl_pipe::read();
-
-            if (ctrl == 0) {
-              idx_load_pipe::write(idx_load_1_pipe::read());
-            } else {
-              idx_load_pipe::write(idx_load_2_pipe::read());
-            }
-          }
-        }
-      }
-    });
-  });
-
-  q.submit([&](handler &hnd) {
     accessor row(row_buf, hnd, read_only);
 
     hnd.single_task<class StoreIdxs>([=]() [[intel::kernel_args_restrict]] {
@@ -166,80 +131,117 @@ double spmv_kernel(queue &q,
     accessor matrix(matrix_buf, hnd, read_write);
 
     hnd.single_task<class LSQ>([=]() [[intel::kernel_args_restrict]] {
-      [[intel::fpga_register]] store_entry store_entries[STORE_Q_SIZE];
+      [[intel::fpga_registers]] store_entry store_entries[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, tag} pairs to pick the youngest store from the store entries.
-      [[intel::fpga_register]] candidate forward_candidates[STORE_Q_SIZE];
+      [[intel::fpga_registers]] candidate forward_candidates[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, idx_into_x} pairs.
-      [[intel::fpga_register]] pair store_idx_fifo[STORE_Q_SIZE];
-
-      // All entries are invalid at the start.
-      // #pragma unroll
-      // for (uint i=0; i<STORE_Q_SIZE; ++i) {
-      //   store_entries[i] = INVALID_ENTRY;
-      // }
+      [[intel::fpga_registers]] pair store_idx_fifo[STORE_Q_SIZE];
 
       int i_store_val = 0;
       int i_store_idx = 0;
       int store_idx_fifo_head = 0;
-      // int entries_fifo_head = 0;
 
-      int idx_load_1, idx_load_2, idx_store, idx_load; 
-      float val_store, val_load;
-      bool consumer_id_load;
-      int tag_load = 0; 
       int tag_store = 0;
+      int idx_store;
+      float val_store;
 
-      bool val_load_pipe_write_succ = true;
-      bool is_load_waiting_for_val = false;
-      bool is_load_waiting_for_store_idx = false;
+      float val_load_1;
+      int idx_load_1, tag_load_1 = 0; 
+      bool val_load_1_pipe_write_succ = true;
+      bool is_load_1_waiting_for_val = false;
+      bool is_load_1_waiting_for_store_idx = false;
+
+      float val_load_2;
+      int  idx_load_2, tag_load_2 = 0; 
+      bool val_load_2_pipe_write_succ = true;
+      bool is_load_2_waiting_for_val = false;
+      bool is_load_2_waiting_for_store_idx = false;
 
       bool end_signal = false;
 
-      // int total_stores = -1;
-
       [[intel::ivdep]] 
       while (!end_signal || i_store_idx > i_store_val) {
-        // sycl_print("tag_load %d  tag_store %d", tag_load, tag_store);
-        /* Start Load Logic */
-        if (tag_load <= tag_store && val_load_pipe_write_succ) {
+      // If the num of stores can be determined statically, then we don't need an end_signal pipe.
+      // while (i_store_val < M*(M-1)) { 
+
+        /* 
+          All loads can execute concurrently.
+          The logic for all loads is the same; the only difference are the i/o pipe names (types).
+        */
+
+        /* Start Load 1 Logic */
+        if (tag_load_1 <= tag_store && val_load_1_pipe_write_succ) {
           bool idx_load_pipe_succ = false;
 
-          if (!is_load_waiting_for_val && val_load_pipe_write_succ) {
-            auto idx_tag_consumer = idx_load_pipe::read(idx_load_pipe_succ);
-            idx_load = idx_tag_consumer.fst;
-            tag_load = idx_tag_consumer.snd;
-            consumer_id_load = idx_tag_consumer.thrd;
+          if (!is_load_1_waiting_for_val) {
+            auto idx_tag_consumer = idx_load_1_pipe::read(idx_load_pipe_succ);
+            idx_load_1 = idx_tag_consumer.fst;
+            tag_load_1 = idx_tag_consumer.snd;
           }
 
-          if (idx_load_pipe_succ || is_load_waiting_for_val) {
-            is_load_waiting_for_val = false;
+          if (idx_load_pipe_succ || is_load_1_waiting_for_val) {
+            is_load_1_waiting_for_val = false;
 
             int max_tag = -1;
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
               auto st_entry = store_entries[i];
-              if (st_entry.idx == idx_load && st_entry.countdown > 0 &&
-                  st_entry.tag < tag_load && st_entry.tag > max_tag) {
+              if (st_entry.idx == idx_load_1 && st_entry.countdown > 0 &&
+                  st_entry.tag < tag_load_1 && st_entry.tag > max_tag) {
                 max_tag = st_entry.tag;
-                is_load_waiting_for_val = !st_entry.executed;
-                val_load = st_entry.val;
+                is_load_1_waiting_for_val = !st_entry.executed;
+                val_load_1 = st_entry.val;
               }
             }
 
             if (max_tag == -1) {
-              val_load = PipelinedLSU::load(matrix.get_pointer() + idx_load);
+              val_load_1 = PipelinedLSU::load(matrix.get_pointer() + idx_load_1);
             }
 
-            val_load_pipe_write_succ = is_load_waiting_for_val;
+            val_load_1_pipe_write_succ = is_load_1_waiting_for_val;
           }
         }
-        if (!val_load_pipe_write_succ) {
-          if (consumer_id_load == 0)
-            val_load_1_pipe::write(val_load, val_load_pipe_write_succ);
-          else
-            val_load_2_pipe::write(val_load, val_load_pipe_write_succ);
+        if (!val_load_1_pipe_write_succ) {
+          val_load_1_pipe::write(val_load_1, val_load_1_pipe_write_succ);
         }
-        /* End Load Logic */
+        /* End Load 1 Logic */
+
+        /* Start Load 2 Logic */
+        if (tag_load_2 <= tag_store && val_load_2_pipe_write_succ) {
+          bool idx_load_pipe_succ = false;
+
+          if (!is_load_2_waiting_for_val) {
+            auto idx_tag_consumer = idx_load_2_pipe::read(idx_load_pipe_succ);
+            idx_load_2 = idx_tag_consumer.fst;
+            tag_load_2 = idx_tag_consumer.snd;
+          }
+
+          if (idx_load_pipe_succ || is_load_2_waiting_for_val) {
+            is_load_2_waiting_for_val = false;
+
+            int max_tag = -1;
+            #pragma unroll
+            for (uint i=0; i<STORE_Q_SIZE; ++i) {
+              auto st_entry = store_entries[i];
+              if (st_entry.idx == idx_load_2 && st_entry.countdown > 0 &&
+                  st_entry.tag < tag_load_2 && st_entry.tag > max_tag) {
+                max_tag = st_entry.tag;
+                is_load_2_waiting_for_val = !st_entry.executed;
+                val_load_2 = st_entry.val;
+              }
+            }
+
+            if (max_tag == -1) {
+              val_load_2 = PipelinedLSU::load(matrix.get_pointer() + idx_load_2);
+            }
+
+            val_load_2_pipe_write_succ = is_load_2_waiting_for_val;
+          }
+        }
+        if (!val_load_2_pipe_write_succ) {
+          val_load_2_pipe::write(val_load_2, val_load_2_pipe_write_succ);
+        }
+        /* End Load 2 Logic */
       
 
         /* Start Store Logic */
@@ -294,10 +296,7 @@ double spmv_kernel(queue &q,
         if (!end_signal)
           end_lsq_signal_pipe::read(end_signal);
 
-        // sycl_print("-- end signal %d\n  total_stores %d  i_store_val %d\n", end_signal, total_stores, i_store_val);
       }
-
-      // sycl_print("Finished LSQ\n");
     });
   });
 
@@ -316,7 +315,6 @@ double spmv_kernel(queue &q,
       }
 
       end_lsq_signal_pipe::write(1);
-      // sycl_print("END\n");
     });
   });
 
