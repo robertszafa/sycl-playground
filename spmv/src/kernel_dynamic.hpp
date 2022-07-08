@@ -15,6 +15,10 @@ using namespace sycl;
 
 using PipelinedLSU = ext::intel::lsu<>;
 
+#ifndef Q_SIZE
+  #define Q_SIZE 8
+#endif
+
 constexpr uint STORE_Q_SIZE = Q_SIZE;
 constexpr uint STORE_LATENCY = 16; // This should be gotten from static analysis.
 
@@ -131,11 +135,11 @@ double spmv_kernel(queue &q,
     accessor matrix(matrix_buf, hnd, read_write);
 
     hnd.single_task<class LSQ>([=]() [[intel::kernel_args_restrict]] {
-      [[intel::fpga_registers]] store_entry store_entries[STORE_Q_SIZE];
+      [[intel::fpga_register]] store_entry store_entries[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, tag} pairs to pick the youngest store from the store entries.
-      [[intel::fpga_registers]] candidate forward_candidates[STORE_Q_SIZE];
+      [[intel::fpga_register]] candidate forward_candidates[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, idx_into_x} pairs.
-      [[intel::fpga_registers]] pair store_idx_fifo[STORE_Q_SIZE];
+      [[intel::fpga_register]] pair store_idx_fifo[STORE_Q_SIZE];
 
       int i_store_val = 0;
       int i_store_idx = 0;

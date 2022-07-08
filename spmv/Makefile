@@ -6,24 +6,18 @@ ifndef Q_SIZE
 Q_SIZE := 1
 endif
 
-ifndef M
-M := 4
-endif
-
-# For Pipe Array headers, etc
-# INC := /home/rob/git/oneAPI-samples/DirectProgramming/DPC++FPGA/include
 
 SRC := src/main.cpp
 HDR := src/kernel_$(KERNEL).hpp
-BIN := bin/spmv_$(KERNEL)_$(M)M
+BIN := bin/spmv_$(KERNEL)
 
 ifeq ($(KERNEL), dynamic)
-	BIN := bin/spmv_$(KERNEL)_$(Q_SIZE)qsize_$(M)M
+	BIN := bin/spmv_$(KERNEL)_$(Q_SIZE)qsize
 endif
 
 
 CXX := dpcpp
-CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE) -DM_SIZE=$(M)
+CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE)
 # CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
 # CXXFLAGS += -Xsghdl
