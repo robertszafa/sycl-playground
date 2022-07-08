@@ -11,6 +11,8 @@ using namespace sycl;
 
 class HistogramKernel;
 
+using PipelinedLSU = ext::intel::lsu<>;
+
 double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::vector<uint> &weight,
                         std::vector<uint> &hist) {
   std::cout << "Static HLS\n";

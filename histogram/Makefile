@@ -6,24 +6,20 @@ ifndef Q_SIZE
 Q_SIZE := 1
 endif
 
-ifndef A_SIZE
-A_SIZE := 64
-endif
-
-# For Pipe Array headers, etc
-INC := /home/rob/git/oneAPI-samples/DirectProgramming/DPC++FPGA/include
-
 SRC := src/main.cpp
 HDR := src/kernel_$(KERNEL).hpp
-BIN := bin/histogram_$(KERNEL)_$(A_SIZE)asize
+BIN := bin/histogram_$(KERNEL)
 
-# ifeq ($(KERNEL), dynamic)
-# 	BIN := bin/histogram_$(KERNEL)_$(Q_SIZE)qsize_$(A_SIZE)asize
-# endif
+ifeq ($(KERNEL), dynamic)
+	BIN := bin/histogram_$(KERNEL)_$(Q_SIZE)qsize
+endif
+ifeq ($(KERNEL), dynamic_no_forward)
+	BIN := bin/histogram_$(KERNEL)_$(Q_SIZE)qsize
+endif
 
 
 CXX := dpcpp
-CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -I$(INC) -DQ_SIZE=$(Q_SIZE) -DA_SIZE=$(A_SIZE)
+CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE) 
 # CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
 # CXXFLAGS += -Xsghdl
