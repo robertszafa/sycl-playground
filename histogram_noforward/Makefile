@@ -23,7 +23,7 @@ endif
 
 
 CXX := dpcpp
-CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE) -DA_SIZE=$(A_SIZE) -qactypes
+CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE) -DA_SIZE=$(A_SIZE)
 # CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
 # CXXFLAGS += -Xsghdl
