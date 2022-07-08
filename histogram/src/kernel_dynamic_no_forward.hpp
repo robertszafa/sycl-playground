@@ -24,7 +24,6 @@ constexpr uint STORE_LATENCY = 12; // This should be gotten from static analysis
 
 struct store_entry {
   int idx; // This should be the full address in a real impl.
-  uint val;
   bool executed;
   int countdown;
   int tag;
@@ -138,11 +137,15 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         int next_entry_slot = -1;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          if (store_entries[i].executed && store_entries[i].countdown > 0) {
+          bool exec = store_entries[i].executed;
+          int count = store_entries[i].countdown;
+
+          if (exec) {
             store_entries[i].countdown--;
           }
 
-          if (store_entries[i].countdown <= 0) {
+          if (count <= 1) {
+            store_entries[i].executed = false;
             next_entry_slot = i;
           }
         }
@@ -153,7 +156,7 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         }
 
         if (idx_store_pipe_succ) {
-          store_entries[next_entry_slot] = {(int) idx_store, 1000, false, STORE_LATENCY, i_store_idx};
+          store_entries[next_entry_slot] = {(int) idx_store, false, STORE_LATENCY, i_store_idx};
           store_idx_fifo[store_idx_fifo_head] = {next_entry_slot, idx_store};
 
           i_store_idx++;
@@ -168,7 +171,6 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         if (val_store_pipe_succ) {
           auto entry_store_idx_pair = store_idx_fifo[0];           
           PipelinedLSU::store(hist.get_pointer() + entry_store_idx_pair.store_idx, val_store);
-          store_entries[entry_store_idx_pair.queue_idx].val = val_store;
           store_entries[entry_store_idx_pair.queue_idx].executed = true;
 
           #pragma unroll

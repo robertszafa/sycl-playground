@@ -174,11 +174,15 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
         int next_entry_slot = -1;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          if (store_entries[i].executed && store_entries[i].countdown > 0) {
+          bool exec = store_entries[i].executed;
+          int count = store_entries[i].countdown;
+
+          if (exec) {
             store_entries[i].countdown--;
           }
 
-          if (store_entries[i].countdown <= 0) {
+          if (count <= 1) {
+            store_entries[i].executed = false;
             next_entry_slot = i;
           }
         }
