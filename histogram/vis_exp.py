@@ -1,31 +1,40 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-# import seaborn as sns
 
 # Keep parameters synced
 from run_exp import *
 
+plt.rcParams['font.size'] = 14
+# colors = seaborn.color_palette("rocket", 3)
+colors = ['#c3121e', '#0348a1', '#ffb01c', '#027608', '#0193b0', '#9c5300', '#949c01', '#7104b5']
+# plt.figure(unique_id) ensures that different invocations of make_plot() don't interfere
+fig_id = 0
 
-def make_plot(filename, y_label='Execution time (ms)'):
-  plt.rcParams['font.size'] = 14
+
+def make_plot(filename, relative=True, y_label='Execution time (ms)', title=''):
+  global fig_id 
+
+  fig_id = fig_id + 1
+
   df = pd.read_csv(filename)
+  x = df['q_size']
+  y = df['static'].replace({0:np.nan})
 
-  x = df['q_size'].dropna()
-  y = df['static'].dropna()
 
-  x2 = df['q_size'].dropna()
-  y2 = df['dynamic'].dropna()
+  x2 = df['q_size']
+  y2 = df['dynamic'].replace({0:np.nan})
+  x3 = df['q_size']
+  y3 = df['dynamic_no_forward'].replace({0:np.nan})
 
-  x3 = df['q_size'].dropna()
-  y3 = df['dynamic_no_forward'].dropna()
-
-  # bodacious colors
-  # colors = sns.color_palette("rocket", 3)
-  colors = ['#c3121e', '#0348a1', '#ffb01c', '#027608', '#0193b0', '#9c5300', '#949c01', '#7104b5']
+  if relative:
+    static_baseline = y[0]
+    y = [1 for _ in df['static']]
+    y2 = [val/static_baseline for val in y2]
+    y3 = [val/static_baseline for val in y3]
 
   # plot
-  fig = plt.figure(1, figsize=(8, 6))
+  fig = plt.figure(fig_id, figsize=(8, 8))
   plt.semilogx(x3, y3, linestyle='-', marker='^', label='dynamic (no forwarding)',
               color=colors[2], mfc='w', markersize=8)  
   plt.semilogx(x2, y2, linestyle='-', marker='s', label='dynamic (forwarding)',
@@ -41,13 +50,24 @@ def make_plot(filename, y_label='Execution time (ms)'):
 
   # add the legend (will default to 'best' location)
   plt.legend(fontsize=14)  
+  plt.title(title)  
 
   plt.savefig(filename.replace('csv', 'png'), dpi=300, bbox_inches="tight")
 
 
 if __name__ == '__main__':
 
-  SUB_DIR = 'hardware' # 'simulation'
+  array_size = 1000 # 2**20
+  relative = True
+
+  is_sim = any('sim' in arg for arg in sys.argv[1:])
+  SUB_DIR = 'simulation' if is_sim else 'hardware'
+  y_label = 'Cycles' if is_sim else 'Time (ms)'
+  if relative:
+    y_label += ' relative to static'
 
   for k, v in DATA_DISTRIBUTIONS.items():
-    make_plot(f'{RUN_DATA_DIR}/{SUB_DIR}/{DATA_DISTRIBUTIONS[0]}.csv', y_label='Time (ms)')
+    make_plot(f'{RUN_DATA_DIR}/{SUB_DIR}/{DATA_DISTRIBUTIONS[k]}_{array_size}.csv', 
+              relative=relative,
+              y_label=y_label,
+              title=f'Array of {array_size} elements with data distribution {v}')

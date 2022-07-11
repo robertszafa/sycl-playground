@@ -7,13 +7,16 @@ import csv
 
 RUN_DATA_DIR = 'run_data/'
 
+KERNEL = 'histogram'
+
 BIN_EXTENSION = 'fpga_sim'
+
 Q_SIZES_DYNAMIC = [1, 2, 4, 8]
 Q_SIZES_DYNAMIC_NO_FORWARD = [1, 2, 4, 8, 16, 32, 64]
-BINS_STATIC = [f'bin/histogram_static.{BIN_EXTENSION}']
-BINS_DYNAMIC = [f'bin/histogram_dynamic_{s}qsize.{BIN_EXTENSION}' for s in Q_SIZES_DYNAMIC]
+BINS_STATIC = [f'bin/{KERNEL}_static.{BIN_EXTENSION}']
+BINS_DYNAMIC = [f'bin/{KERNEL}_dynamic_{s}qsize.{BIN_EXTENSION}' for s in Q_SIZES_DYNAMIC]
 BINS_DYNAMIC_NO_FORWARD = [
-    f'bin/histogram_dynamic_no_forward_{s}qsize.{BIN_EXTENSION}' for s in Q_SIZES_DYNAMIC_NO_FORWARD]
+    f'bin/{KERNEL}_dynamic_no_forward_{s}qsize.{BIN_EXTENSION}' for s in Q_SIZES_DYNAMIC_NO_FORWARD]
 
 SIM_CYCLES_FILE = 'simulation_raw.json'
 
@@ -23,7 +26,7 @@ DATA_DISTRIBUTIONS = {
     2: 'random'
 }
 
-A_SIZE = 12
+A_SIZE = 1000
 
 BRAM_STATIC_PARTITION = 492
 ALMS_STATIC_PARTITION = 89975   # In report this is 'Logic utilization'
