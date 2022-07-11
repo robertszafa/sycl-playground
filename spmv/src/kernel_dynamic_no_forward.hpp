@@ -56,7 +56,7 @@ double spmv_kernel(queue &q,
                    std::vector<float> &a,             
                    const int M) {
 
-  std::cout << "Dynamic HLS\n";
+  std::cout << "Dynamic (no forwarding) HLS\n";
 
   buffer matrix_buf(matrix);
   buffer row_buf(row);
