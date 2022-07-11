@@ -14,6 +14,9 @@ BIN := bin/spmv_$(KERNEL)
 ifeq ($(KERNEL), dynamic)
 	BIN := bin/spmv_$(KERNEL)_$(Q_SIZE)qsize
 endif
+ifeq ($(KERNEL), dynamic_no_forward)
+	BIN := bin/spmv_$(KERNEL)_$(Q_SIZE)qsize
+endif
 
 
 CXX := dpcpp
