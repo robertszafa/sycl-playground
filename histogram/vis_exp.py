@@ -1,7 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
+# import seaborn as sns
 
 # Keep parameters synced
 from run_exp import *
@@ -46,4 +46,8 @@ def make_plot(filename, y_label='Execution time (ms)'):
 
 
 if __name__ == '__main__':
-  make_plot(f'{RUN_DATA_DIR}{DATA_DISTRIBUTIONS[0]}.csv', y_label='Cycles')
+
+  SUB_DIR = 'hardware' # 'simulation'
+
+  for k, v in DATA_DISTRIBUTIONS.items():
+    make_plot(f'{RUN_DATA_DIR}/{SUB_DIR}/{DATA_DISTRIBUTIONS[0]}.csv', y_label='Time (ms)')
