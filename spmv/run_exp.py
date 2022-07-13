@@ -1,5 +1,4 @@
 import os
-import sys
 import re
 import subprocess
 import csv
@@ -26,7 +25,7 @@ DATA_DISTRIBUTIONS = {
     2: 'random'
 }
 
-M_SIZE = 1000
+M_SIZE = 20
 
 BRAM_STATIC_PARTITION = 492
 ALMS_STATIC_PARTITION = 89975   # In report this is 'Logic utilization'
@@ -39,6 +38,10 @@ def run_bin(bin, M_SIZE=M_SIZE, distr=0):
     result = 0
     if 'sim' in bin: 
         stdout = os.system(f'{bin} {M_SIZE} {distr} > /dev/null')
+
+        if not 'Passed' in str(stdout):
+            print(f'>> Result fail in {bin} {M_SIZE} {distr}')
+
         # Get cycle count
         with open(SIM_CYCLES_FILE, 'r') as f:
             match = re.search(r'"time":"(\d+)"', f.read())
@@ -46,6 +49,10 @@ def run_bin(bin, M_SIZE=M_SIZE, distr=0):
             result = int(match.group(1)) / 1000 
     else: 
         stdout = str(subprocess.check_output([str(bin), str(M_SIZE), str(distr)]))
+
+        if not 'Passed' in str(stdout):
+            print(f'>> Result fail in {bin} {M_SIZE} {distr}')
+
         # Get time
         match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
         if (match):
@@ -59,7 +66,7 @@ if __name__ == '__main__':
     SUB_DIR = 'simulation' if 'sim' in BIN_EXTENSION else 'hardware'
 
     for k, v in DATA_DISTRIBUTIONS.items():
-        with open(f'{RUN_DATA_DIR}/{SUB_DIR}/{v}.csv', 'w') as f:
+        with open(f'{RUN_DATA_DIR}/{SUB_DIR}/{v}_{M_SIZE}.csv', 'w') as f:
             writer = csv.writer(f)
             writer.writerow(['q_size', 'static', 'dynamic', 'dynamic_no_forward'])
 
