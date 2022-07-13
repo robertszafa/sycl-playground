@@ -10,6 +10,10 @@
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
+// From oneAPI-samples/DirectProgramming/DPC++FPGA/include
+#include "pipe_utils.hpp"
+#include "unrolled_loop.hpp"
+
 using namespace sycl;
 
 #ifdef __SYCL_DEVICE_ONLY__
@@ -29,30 +33,31 @@ using PipelinedLSU = ext::intel::lsu<>;
 #endif
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 72; // This should be gotten from static analysis.
-
+constexpr uint STORE_LATENCY = 8; // This should be gotten from static analysis.
 
 struct store_entry {
   int idx; // This should be the full address in a real impl.
-  // bool executed;
-  int countdown;
   int tag;
 };
-
-struct load_entry {
-  int idx; // This should be the full address in a real impl.
-  int tag;
-};
-
 struct pair {
   int fst; 
   int snd; 
 };
-struct triple {
-  int fst; 
-  int snd; 
-  int thrd; 
-};
+
+// Forward declare store port kernels and I/O pipes.
+template <int T> class StorePortKernel;
+using PortInPipeArray = fpga_tools::PipeArray< // Defined in "pipe_utils.hpp".
+    class PortIn,                              // An identifier for the pipe.
+    bool,                                       // The type of data in the pipe.
+    0,                                         // The capacity of each pipe.
+    STORE_Q_SIZE                               // array dimension.
+    >;
+using PortOutPipeArray = fpga_tools::PipeArray< 
+    class PortOut,                              
+    bool,                                       
+    0,
+    STORE_Q_SIZE                               
+    >;
 
 
 // Maybe have a seq (1 for exec, 0 for not) pipe for each ld, st and count the tokens such that 
@@ -143,6 +148,24 @@ double spmv_kernel(queue &q,
     });
   });
 
+  fpga_tools::UnrolledLoop<0, STORE_Q_SIZE>([&](auto i) {
+    q.submit([&](handler &hnd) {
+      hnd.single_task<StorePortKernel<i>>([=]() [[intel::kernel_args_restrict]] {
+        while(1) {
+          bool terminate = PortInPipeArray::PipeAt<i>::read();
+          if (terminate) break;
+
+          // TODO: Use latency anchor extension instead of countdown.
+          // uint count = STORE_LATENCY;
+          // while(count > 0) count--;
+
+          PortOutPipeArray::PipeAt<i>::write(0);
+        }
+      });
+    });
+  });
+
+
   q.submit([&](handler &hnd) {
     accessor matrix(matrix_buf, hnd, read_write);
 
@@ -150,6 +173,11 @@ double spmv_kernel(queue &q,
       [[intel::fpga_register]] store_entry store_entries[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, idx_into_x} pairs.
       [[intel::fpga_register]] pair store_idx_fifo[STORE_Q_SIZE];
+
+      #pragma unroll
+      for (int i=0; i<STORE_Q_SIZE; ++i) {
+        store_entries[i] = {-1, -1};
+      }
 
       int i_store_val = 0;
       int i_store_idx = 0;
@@ -176,14 +204,6 @@ double spmv_kernel(queue &q,
 
       [[intel::ivdep]] 
       while (!end_signal || i_store_idx > i_store_val) {
-      // If the num of stores can be determined statically, then we don't need an end_signal pipe.
-      // while (i_store_val < M*(M-1)) { 
-        // PRINTF("idx_store %d  idx_load_1 %d idx_load_2 %d\n", idx_store, idx_load_1, idx_load_2);
-        // PRINTF("load_1_waiting %d load_2_waiting %d\n", is_load_1_waiting, is_load_2_waiting);
-
-        // PRINTF("i_load_1_idx %d  tag_load_1 %d\n", idx_load_1, tag_load_1);
-        // PRINTF("i_load_2_idx %d  tag_load_2 %d\n", idx_load_2, tag_load_2);
-
         /* Start Load 1 Logic */
         if (tag_load_1 <= tag_store && val_load_1_pipe_write_succ) {
           bool idx_load_pipe_succ = false;
@@ -200,7 +220,7 @@ double spmv_kernel(queue &q,
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
               auto st_entry = store_entries[i];
-              if (st_entry.idx == idx_load_1 && st_entry.countdown > 0 && st_entry.tag < tag_load_1) {
+              if (st_entry.idx == idx_load_1 && st_entry.tag < tag_load_1) {
                 _is_load_1_waiting |= true;
               }
             }
@@ -234,7 +254,7 @@ double spmv_kernel(queue &q,
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
               auto st_entry = store_entries[i];
-              if (st_entry.idx == idx_load_2 && st_entry.countdown > 0 && st_entry.tag < tag_load_2) {
+              if (st_entry.idx == idx_load_2 && st_entry.tag < tag_load_2) {
                 _is_load_2_waiting |= true;
               }
             }
@@ -252,25 +272,23 @@ double spmv_kernel(queue &q,
         }
         /* End Load 2 Logic */
       
-
         /* Start Store Logic */
+        // Check if any store on the store ports has completed
+        fpga_tools::UnrolledLoop<0, STORE_Q_SIZE>([&](auto i) {
+          bool succ = false;
+          PortOutPipeArray::PipeAt<i>::read(succ);
+          if (succ) {
+            store_entries[i].idx = -1;
+          }
+        });
+
         int next_entry_slot = -1;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          // bool exec = store_entries[i].executed;
-          const int count = store_entries[i].countdown;
-
-          if (count > 0) {
-            store_entries[i].countdown--;
-            // PRINTF("idx %d in st_q with count %d \n", store_entries[i].idx, count);
-          }
-
-          if (count == 0) {
+          if (store_entries[i].idx == -1)  {
             next_entry_slot = i;
-            // store_entries[i].idx = -1;
           }
         }
-        // PRINTF("Next free slot %d\n", next_entry_slot);
 
         bool idx_store_pipe_succ = false;
         if (next_entry_slot != -1 && store_idx_fifo_head < STORE_Q_SIZE) {
@@ -280,10 +298,9 @@ double spmv_kernel(queue &q,
         if (idx_store_pipe_succ) {
           idx_store = idx_tag_pair_store.fst;
           tag_store = idx_tag_pair_store.snd;
-          store_entries[next_entry_slot] = {(int) idx_store, -1, tag_store};
+          store_entries[next_entry_slot] = {idx_store, tag_store};
           store_idx_fifo[store_idx_fifo_head] = {next_entry_slot, idx_store};
 
-          // PRINTF("idx_store %d  i_store_idx %d  tag_store %d\n", idx_store, i_store_idx, tag_store);
           i_store_idx++;
           store_idx_fifo_head++;
         }
@@ -296,7 +313,13 @@ double spmv_kernel(queue &q,
         if (val_store_pipe_succ) {
           auto entry_slot_and_idx_pair = store_idx_fifo[0];           
           PipelinedLSU::store(matrix.get_pointer() + entry_slot_and_idx_pair.snd, val_store);
-          store_entries[entry_slot_and_idx_pair.fst].countdown = STORE_LATENCY;
+
+          // Start countdown on the correct port.
+          fpga_tools::UnrolledLoop<0, STORE_Q_SIZE>([&](auto i) {
+            if (i == entry_slot_and_idx_pair.fst) {
+              PortInPipeArray::PipeAt<i>::write(0);
+            }
+          });
 
           #pragma unroll
           for (uint i=1; i<STORE_Q_SIZE; ++i) {
@@ -304,7 +327,6 @@ double spmv_kernel(queue &q,
           }
           store_idx_fifo_head--;
 
-          // PRINTF("store_val %d  i_store_val %d\n", val_store, i_store_val);
           i_store_val++;
         }
         /* End Store Logic */
@@ -313,6 +335,12 @@ double spmv_kernel(queue &q,
           end_lsq_signal_pipe::read(end_signal);
 
       }
+
+      // Stop all port countdown kernels.
+      fpga_tools::UnrolledLoop<0, STORE_Q_SIZE>([&](auto i) {
+        PortInPipeArray::PipeAt<i>::write(1);
+      });
+
     });
   });
 
@@ -323,19 +351,14 @@ double spmv_kernel(queue &q,
           auto load_x_1 = val_load_1_pipe::read(); // matrix[(k - 1) * M + col[p]];
           auto load_x_2 = val_load_2_pipe::read(); // matrix[k*M + row[p]];
           auto load_a = ld_a_pipe::read();
-          PRINTF("load_x_1 %.2f\n", load_x_1);
-          PRINTF("load_x_2 %.2f\n", load_x_2);
-          PRINTF("load_a %.2f\n", load_a);
 
           auto store_x = load_x_2 + load_a * load_x_1;
-          PRINTF("store_x_calc %.2f\n", store_x);
           
           val_store_pipe::write(store_x);
         }
       }
 
       end_lsq_signal_pipe::write(1);
-      PRINTF("Finished calc\n");
     });
   });
 
