@@ -21,6 +21,7 @@ endif
 
 CXX := dpcpp
 CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE)
+# CXXFLAGS += -I/home/rob/git/oneAPI-samples/DirectProgramming/DPC++FPGA/include/
 # CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
 # CXXFLAGS += -Xsghdl
