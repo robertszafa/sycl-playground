@@ -2,9 +2,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
+from pathlib import Path
 
 # Keep parameters synced
-from run_exp import *
+from run_exp import EXP_DATA_DIR, Q_SIZES_DYNAMIC, Q_SIZES_DYNAMIC_NO_FORWARD, DATA_DISTRIBUTIONS
+from run_exp import A_SIZES_KERNELS, KERNELS
 
 plt.rcParams['font.size'] = 14
 # colors = seaborn.color_palette("rocket", 3)
