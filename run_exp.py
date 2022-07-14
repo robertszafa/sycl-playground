@@ -60,7 +60,7 @@ if __name__ == '__main__':
 
     is_sim = any('sim' in arg for arg in sys.argv[1:])
 
-    BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga_emu'
+    BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
     SUB_DIR = 'simulation' if is_sim else 'hardware'
 
     
