@@ -2,7 +2,6 @@ import sys
 import os
 import re
 import csv
-import tempfile
 from pathlib import Path
 
 
@@ -15,9 +14,9 @@ KERNEL_ASIZE_PAIRS = {
 }
 # Decrease domain sizes when running in simulation.
 KERNEL_ASIZE_PAIRS_SIM = {
-    'histogram' : 1000000,
-    'histogram_if' : 1000000,
-    'spmv' : 400,
+    'histogram' : 1000,
+    'histogram_if' : 1000,
+    'spmv' : 20,
 }
 
 DATA_DISTRIBUTIONS = {
@@ -30,7 +29,7 @@ Q_SIZES_DYNAMIC = [1, 2, 4, 8]
 Q_SIZES_DYNAMIC_NO_FORWARD = [1, 2, 4, 8, 16, 32, 64]
 
 SIM_CYCLES_FILE = 'simulation_raw.json'
-TMP_FILE = tempfile.NamedTemporaryFile()
+TMP_FILE = '.tmp_run_exp.txt'
 
 # BRAM_STATIC_PARTITION = 492
 # ALMS_STATIC_PARTITION = 89975   # In report this is 'Logic utilization'
@@ -39,29 +38,25 @@ TMP_FILE = tempfile.NamedTemporaryFile()
 
 
 def run_bin(bin, a_size, distr=0):
-    os.system(f'{bin} {a_size} {distr} > {TMP_FILE.name}')
+    os.system(f'{bin} {a_size} {distr} > {TMP_FILE}')
 
-    result = 0
     stdout = ''
+    with open(TMP_FILE, 'r') as f:
+        stdout = str(f.read())
+    if not 'Passed' in stdout:
+        print(f' - Fail in {bin} {a_size} {distr}')
+    
     if 'fpga_sim' in bin: 
         # Get cycle count
         with open(SIM_CYCLES_FILE, 'r') as f:
-            stdout = f.read()
-            match = re.search(r'"time":"(\d+)"', stdout)
+            match = re.search(r'"time":"(\d+)"', f.read())
         if (match):
-            result = int(match.group(1))
+            return int(match.group(1))
     else: 
         # Get time
-        with open(TMP_FILE.name, 'r') as f:
-            stdout = f.read()
-            match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
+        match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
         if (match):
-            result = float(match.group(1))
-
-    if not 'Passed' in stdout:
-        print(f' in {bin} {a_size} {distr}')
-
-    return result
+            return float(match.group(1))
 
 
 if __name__ == '__main__':
@@ -107,5 +102,6 @@ if __name__ == '__main__':
                     new_row.append(dyn_no_forward_time)
                     writer.writerow(new_row)
 
+    os.system(f'rm {TMP_FILE}')
 
 
