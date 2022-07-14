@@ -1,4 +1,5 @@
 import sys
+import os
 import re
 import subprocess
 import csv
@@ -24,8 +25,8 @@ DATA_DISTRIBUTIONS = {
 }
 
 A_SIZES_KERNELS = {
-    'histogram' : 1000,
-    'spmv' : 20
+    'histogram' : 1000000,
+    'spmv' : 400,      
 }
 
 # BRAM_STATIC_PARTITION = 492
@@ -35,23 +36,28 @@ A_SIZES_KERNELS = {
 
 
 def run_bin(bin, a_size, distr=0):
-    stdout = str(subprocess.check_output([str(bin), str(a_size), str(distr)], shell=True))
+    tmp_file = f'tmp_res.txt'
+    os.system(f'{bin} {a_size} {distr} > {tmp_file}')
+
+    result = 0
+    stdout = ''
+    if 'fpga_sim' in bin: 
+        # Get cycle count
+        with open(SIM_CYCLES_FILE, 'r') as f:
+            stdout = f.read()
+            match = re.search(r'"time":"(\d+)"', stdout)
+        if (match):
+            result = int(match.group(1))
+    else: 
+        # Get time
+        with open(tmp_file, 'r') as f:
+            stdout = f.read()
+            match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
+        if (match):
+            result = float(match.group(1))
 
     if not 'Passed' in stdout:
         print(f' in {bin} {a_size} {distr}')
-
-    result = 0
-    if 'sim' in bin: 
-        # Get cycle count
-        with open(SIM_CYCLES_FILE, 'r') as f:
-            match = re.search(r'"time":"(\d+)"', f.read())
-        if (match):
-            result = int(match.group(1)) / 1000
-    else: 
-        # Get time
-        match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
-        if (match):
-            result = float(match.group(1))
 
     return result
 
@@ -63,9 +69,15 @@ if __name__ == '__main__':
     BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
     SUB_DIR = 'simulation' if is_sim else 'hardware'
 
-    
+    # Decrease domain sizes when running in simulation.
+    if is_sim:
+        A_SIZES_KERNELS = {
+            'histogram' : 1000,
+            'spmv' : 20,      
+        }
+
     for kernel in KERNELS:
-        print('Running kernel: ', kernel)
+        print('Running kernel:', kernel)
 
         BINS_STATIC = [f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}']
         BINS_DYNAMIC = [f'{kernel}/bin/{kernel}_dynamic_{s}qsize.{BIN_EXTENSION}' 
@@ -76,7 +88,7 @@ if __name__ == '__main__':
         A_SIZE = A_SIZES_KERNELS[kernel]
 
         for distr_idx, distr_name in DATA_DISTRIBUTIONS.items():
-            print('Running with data distribution: ', distr_name)
+            print('Running with data distribution:', distr_name)
 
             # Ensure dir structure exists
             Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}').mkdir(parents=True, exist_ok=True)

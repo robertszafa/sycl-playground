@@ -1,7 +1,8 @@
+import sys
+import re
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-import sys
 from pathlib import Path
 
 # Keep parameters synced
@@ -64,7 +65,8 @@ def make_plot(filename, relative=True, y_label='Execution time (ms)', title=''):
 
     # Add frequencies as
     if not 'sim' in filename:
-        plt.text(x[len(x) - 1], y[len(y) - 1], '283 MHz', fontsize='x-small', fontstyle='italic')
+        freq = get_freq(BINS_STATIC[0])
+        plt.text(x[len(x) - 1], y[len(y) - 1], f'{freq} MHz', fontsize='x-small', fontstyle='italic')
 
         for i in range(len(BINS_DYNAMIC)):
             freq = get_freq(BINS_DYNAMIC[i])
@@ -93,7 +95,7 @@ if __name__ == '__main__':
     is_sim = any('sim' in arg for arg in sys.argv[1:])
 
     SUB_DIR = 'simulation' if is_sim else 'hardware'
-    BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga_emu'
+    BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
     Y_LABEL = 'Cycles' if is_sim else 'Time (ms)'
     Y_LABEL += ' (normalised)'
 
@@ -110,8 +112,5 @@ if __name__ == '__main__':
         # Ensure dir structure exists
         Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}').mkdir(parents=True, exist_ok=True)
         for distr_idx, distr_name in DATA_DISTRIBUTIONS.items():
-            squared = '^2' if kernel == 'spmv' else ''
-            title=f'Array of {A_SIZES_KERNELS[kernel]}{squared} elements with data distribution {distr_name}'
-
             make_plot(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{DATA_DISTRIBUTIONS[distr_idx]}_{A_SIZES_KERNELS[kernel]}.csv',
-                      y_label=Y_LABEL, title=title)
+                      y_label=Y_LABEL, title=f'Data distribution {distr_name}')
