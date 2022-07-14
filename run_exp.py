@@ -1,22 +1,24 @@
 import sys
 import os
 import re
-import subprocess
 import csv
+import tempfile
 from pathlib import Path
 
 
 EXP_DATA_DIR = 'exp_data/'
 
-KERNELS = [
-    'histogram',
-    'spmv',
-]
-
-Q_SIZES_DYNAMIC = [1, 2, 4, 8]
-Q_SIZES_DYNAMIC_NO_FORWARD = [1, 2, 4, 8, 16, 32, 64]
-
-SIM_CYCLES_FILE = 'simulation_raw.json'
+KERNEL_ASIZE_PAIRS = {
+    'histogram' : 1000000,
+    'histogram_if' : 1000000,
+    'spmv' : 400,
+}
+# Decrease domain sizes when running in simulation.
+KERNEL_ASIZE_PAIRS_SIM = {
+    'histogram' : 1000000,
+    'histogram_if' : 1000000,
+    'spmv' : 400,
+}
 
 DATA_DISTRIBUTIONS = {
     0: 'forwarding_friendly',
@@ -24,10 +26,11 @@ DATA_DISTRIBUTIONS = {
     2: 'random'
 }
 
-A_SIZES_KERNELS = {
-    'histogram' : 1000000,
-    'spmv' : 400,      
-}
+Q_SIZES_DYNAMIC = [1, 2, 4, 8]
+Q_SIZES_DYNAMIC_NO_FORWARD = [1, 2, 4, 8, 16, 32, 64]
+
+SIM_CYCLES_FILE = 'simulation_raw.json'
+TMP_FILE = tempfile.NamedTemporaryFile()
 
 # BRAM_STATIC_PARTITION = 492
 # ALMS_STATIC_PARTITION = 89975   # In report this is 'Logic utilization'
@@ -36,8 +39,7 @@ A_SIZES_KERNELS = {
 
 
 def run_bin(bin, a_size, distr=0):
-    tmp_file = f'tmp_res.txt'
-    os.system(f'{bin} {a_size} {distr} > {tmp_file}')
+    os.system(f'{bin} {a_size} {distr} > {TMP_FILE.name}')
 
     result = 0
     stdout = ''
@@ -50,7 +52,7 @@ def run_bin(bin, a_size, distr=0):
             result = int(match.group(1))
     else: 
         # Get time
-        with open(tmp_file, 'r') as f:
+        with open(TMP_FILE.name, 'r') as f:
             stdout = f.read()
             match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
         if (match):
@@ -63,20 +65,13 @@ def run_bin(bin, a_size, distr=0):
 
 
 if __name__ == '__main__':
-
     is_sim = any('sim' in arg for arg in sys.argv[1:])
 
     BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
     SUB_DIR = 'simulation' if is_sim else 'hardware'
+    KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
 
-    # Decrease domain sizes when running in simulation.
-    if is_sim:
-        A_SIZES_KERNELS = {
-            'histogram' : 1000,
-            'spmv' : 20,      
-        }
-
-    for kernel in KERNELS:
+    for kernel, a_size in KERNEL_ASIZE_PAIRS.items():
         print('Running kernel:', kernel)
 
         BINS_STATIC = [f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}']
@@ -85,27 +80,25 @@ if __name__ == '__main__':
         BINS_DYNAMIC_NO_FORWARD = [f'{kernel}/bin/{kernel}_dynamic_no_forward_{s}qsize.{BIN_EXTENSION}' 
                                    for s in Q_SIZES_DYNAMIC_NO_FORWARD]
 
-        A_SIZE = A_SIZES_KERNELS[kernel]
-
         for distr_idx, distr_name in DATA_DISTRIBUTIONS.items():
             print('Running with data distribution:', distr_name)
 
             # Ensure dir structure exists
             Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}').mkdir(parents=True, exist_ok=True)
 
-            with open(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{distr_name}_{A_SIZE}.csv', 'w') as f:
+            with open(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{distr_name}_{a_size}.csv', 'w') as f:
                 writer = csv.writer(f)
                 writer.writerow(['q_size', 'static', 'dynamic', 'dynamic_no_forward'])
 
-                static_time = run_bin(BINS_STATIC[0], A_SIZE, distr=distr_idx)
+                static_time = run_bin(BINS_STATIC[0], a_size, distr=distr_idx)
 
                 for i, q_size in enumerate(Q_SIZES_DYNAMIC_NO_FORWARD):
                     dyn_time = 0
                     dyn_no_forward_time = 0
                     if len(BINS_DYNAMIC) > i:
-                        dyn_time = run_bin(BINS_DYNAMIC[i], A_SIZE, distr=distr_idx)
+                        dyn_time = run_bin(BINS_DYNAMIC[i], a_size, distr=distr_idx)
                     if len(BINS_DYNAMIC_NO_FORWARD) > i:
-                        dyn_no_forward_time = run_bin(BINS_DYNAMIC_NO_FORWARD[i], A_SIZE, distr=distr_idx)
+                        dyn_no_forward_time = run_bin(BINS_DYNAMIC_NO_FORWARD[i], a_size, distr=distr_idx)
 
                     new_row = []
                     new_row.append(q_size)

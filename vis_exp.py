@@ -6,8 +6,8 @@ import numpy as np
 from pathlib import Path
 
 # Keep parameters synced
-from run_exp import EXP_DATA_DIR, Q_SIZES_DYNAMIC, Q_SIZES_DYNAMIC_NO_FORWARD, DATA_DISTRIBUTIONS
-from run_exp import A_SIZES_KERNELS, KERNELS
+from run_exp import (EXP_DATA_DIR, Q_SIZES_DYNAMIC, Q_SIZES_DYNAMIC_NO_FORWARD, DATA_DISTRIBUTIONS,
+                     KERNEL_ASIZE_PAIRS, KERNEL_ASIZE_PAIRS_SIM)
 
 plt.rcParams['font.size'] = 14
 # colors = seaborn.color_palette("rocket", 3)
@@ -96,21 +96,19 @@ if __name__ == '__main__':
 
     SUB_DIR = 'simulation' if is_sim else 'hardware'
     BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
+    KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
     Y_LABEL = 'Cycles' if is_sim else 'Time (ms)'
     Y_LABEL += ' (normalised)'
 
-    for kernel in KERNELS:
+    for kernel, a_size in KERNEL_ASIZE_PAIRS.items():
         BINS_STATIC = [f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}']
         BINS_DYNAMIC = [f'{kernel}/bin/{kernel}_dynamic_{s}qsize.{BIN_EXTENSION}' 
                         for s in Q_SIZES_DYNAMIC]
         BINS_DYNAMIC_NO_FORWARD = [f'{kernel}/bin/{kernel}_dynamic_no_forward_{s}qsize.{BIN_EXTENSION}' 
                                    for s in Q_SIZES_DYNAMIC_NO_FORWARD]
 
-        A_SIZE = A_SIZES_KERNELS[kernel]
-
-
         # Ensure dir structure exists
         Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}').mkdir(parents=True, exist_ok=True)
         for distr_idx, distr_name in DATA_DISTRIBUTIONS.items():
-            make_plot(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{DATA_DISTRIBUTIONS[distr_idx]}_{A_SIZES_KERNELS[kernel]}.csv',
+            make_plot(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{DATA_DISTRIBUTIONS[distr_idx]}_{a_size}.csv',
                       y_label=Y_LABEL, title=f'Data distribution {distr_name}')
