@@ -6,12 +6,18 @@ from subprocess import Popen, PIPE, STDOUT
 from time import sleep, time
 
 # Keep parameters synced
-from run_exp import EXP_DATA_DIR, Q_SIZES_DYNAMIC, Q_SIZES_DYNAMIC_NO_FORWARD, KERNEL_ASIZE_PAIRS
+from run_exp import EXP_DATA_DIR, Q_SIZES_DYNAMIC, Q_SIZES_DYNAMIC_NO_FORWARD
 
 POWER_MEASUREMENT_RESOLUTION_SECS = 0.1
 
 FPGA_POWER_CMD = 'fpgainfo power'
 
+# Increase sizes to get a >1 min runtime for more accurate power measurement.
+KERNEL_ASIZE_PAIRS = {
+    'histogram' : 400000000,
+    'histogram_if' : 400000000,
+    'spmv' : 16000,
+}
 
 def get_fpga_watts_now():
     out = os.popen(FPGA_POWER_CMD).read()
@@ -19,7 +25,7 @@ def get_fpga_watts_now():
     return float(watts_reg[0])
 
 def run_bin_power(bin, asize):
-    p_bin = Popen([bin, asize], shell=True, stdin=PIPE, stdout=PIPE, stderr=STDOUT, close_fds=True) 
+    p_bin = Popen([bin, f'{asize}'], stdout=PIPE) 
 
     times_measured = 0
     watts_total = 0
@@ -29,7 +35,7 @@ def run_bin_power(bin, asize):
         times_measured += 1
         sleep(POWER_MEASUREMENT_RESOLUTION_SECS)
     end = time()
-    print(f'Ran for {int(end - start)} s')
+    print(f'Ran {bin} for {int(end - start)} s')
 
     avg_watts = float(watts_total) / float(times_measured)
     return avg_watts
@@ -40,7 +46,6 @@ if __name__ == "__main__":
 
     for kernel, a_size in KERNEL_ASIZE_PAIRS.items():
         print('Running kernel:', kernel)
-        a_size *= 100
 
         BINS_STATIC = [f'{kernel}/bin/{kernel}_static.fpga']
         BINS_DYNAMIC = [f'{kernel}/bin/{kernel}_dynamic_{s}qsize.fpga' for s in Q_SIZES_DYNAMIC]
