@@ -25,16 +25,11 @@ DATA_DISTRIBUTIONS = {
     2: 'random'
 }
 
-Q_SIZES_DYNAMIC = [1, 2, 4, 8]
+Q_SIZES_DYNAMIC = [1, 2, 4, 8, 16]
 Q_SIZES_DYNAMIC_NO_FORWARD = [1, 2, 4, 8, 16, 32, 64]
 
 SIM_CYCLES_FILE = 'simulation_raw.json'
 TMP_FILE = '.tmp_run_exp.txt'
-
-# BRAM_STATIC_PARTITION = 492
-# ALMS_STATIC_PARTITION = 89975   # In report this is 'Logic utilization'
-# REGISTERS_STATIC_PARTITION = 98940
-# DSP_STATIC_PARTITION = 0
 
 
 def run_bin(bin, a_size, distr=0):
