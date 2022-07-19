@@ -17,7 +17,7 @@
 
 using namespace sycl;
 
-enum data_distribution { FORWARDING_FRIENDLY, NO_DEPENDENCIES, RANDOM };
+enum data_distribution { ALL_WAIT, NO_WAIT, PERCENTAGE_WAIT };
 
 // Create an exception handler for asynchronous SYCL exceptions
 static auto exception_handler = [](sycl::exception_list e_list) {
@@ -34,20 +34,23 @@ static auto exception_handler = [](sycl::exception_list e_list) {
 };
 
 void init_data(std::vector<float> &matrix, std::vector<float> &a, std::vector<int> &col_index,
-               std::vector<int> &row_ptr, const uint M, data_distribution distr) {
+               std::vector<int> &row_ptr, const uint M, const data_distribution distr, 
+               const uint percentage) {
+  auto every_n = uint(M * double(percentage)/100.0);
+
   for (int r = 0; r < M; ++r) {
 
-    if (distr == data_distribution::FORWARDING_FRIENDLY) {
+    if (distr == data_distribution::ALL_WAIT) {
       col_index[r] = r % 4;
       row_ptr[r] = r % 4;
     }
-    else if (distr == data_distribution::NO_DEPENDENCIES) {
+    else if (distr == data_distribution::NO_WAIT) {
       col_index[r] = r;
       row_ptr[r] = r;
     }
     else {
-      col_index[r] = rand() % M;
-      row_ptr[r] = rand() % M;
+      col_index[r] = (r % every_n == 0 && r > 0) ? r-1 : r;
+      row_ptr[r] = (r % every_n == 0 && r > 0) ? r-1 : r;
     }
 
     a[r] = float(1);
@@ -91,8 +94,9 @@ void spmv_cpu(std::vector<float> &matrix, const std::vector<int> &row, const std
 int main(int argc, char *argv[]) {
   // Get A_SIZE and forward/no-forward from args.
   // defaulats
-  uint M = 20;
-  auto DATA_DISTR = data_distribution::FORWARDING_FRIENDLY;
+  uint M = 64;
+  auto DATA_DISTR = data_distribution::ALL_WAIT;
+  uint PERCENTAGE = 5;
   try {
     if (argc > 1) {
       M = uint(atoi(argv[1]));
@@ -100,10 +104,15 @@ int main(int argc, char *argv[]) {
     if (argc > 2) {
       DATA_DISTR = data_distribution(atoi(argv[2]));
     }
-  } catch (exception const &e) {
+    if (argc > 3) {
+      PERCENTAGE = uint(atoi(argv[3]));
+      std::cout << "Percentage is " << PERCENTAGE << "\n";
+      if (PERCENTAGE < 0 || PERCENTAGE > 100) throw std::invalid_argument("Invalid percentage.");
+    }
+}  catch (exception const &e) {
     std::cout << "Incorrect argv.\nUsage:\n";
-    std::cout << "  ./spmv [M] [data_distribution (0/1/2)]\n";
-    std::cout << "    0 - forward-friendly, 1 - no dependencies, 2 - random\n";
+    std::cout << "  ./hist [ARRAY_SIZE] [data_distribution (0/1/2)] [PERCENTAGE (only for data_distr 2)]\n";
+    std::cout << "    0 - all_wait, 1 - no_wait, 2 - PERCENTAGE wait\n";
     std::terminate();
   }
 
@@ -129,7 +138,7 @@ int main(int argc, char *argv[]) {
     std::vector<int> row_ptr(M);
     std::vector<int> col_index(M);
 
-    init_data(matrix, a, col_index, row_ptr, M, DATA_DISTR);
+    init_data(matrix, a, col_index, row_ptr, M, DATA_DISTR, PERCENTAGE);
     std::copy(matrix.begin(), matrix.end(), golden_matrix.begin());
     spmv_cpu(golden_matrix, row_ptr, col_index, a, M);
 

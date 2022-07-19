@@ -25,11 +25,11 @@ CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE)
 # CXXFLAGS += -Xsghdl
 
 HARDWARE_FLAGS := -Xshardware -DFPGA=1 
-# HARDWARE_FLAGS += -reuse-exe=$(BIN).fpga
+# HARDWARE_FLAGS += -reuse-exe=bin/histogram_$(KERNEL)_1200000asize.fpga
 # -Xssfc-exit-fifo-type=zero-latency
 
 SIMULATION_FLAGS := -Xssimulation -DFPGA=1 
-# -reuse-exe=$(BIN).fpga
+# SIMULATION_FLAGS += -reuse-exe=$(BIN).fpga_sim
 # -Xssfc-exit-fifo-type=zero-latency
 
 

@@ -31,6 +31,7 @@ HARDWARE_FLAGS := -Xshardware -DFPGA=1
 # -Xssfc-exit-fifo-type=zero-latency
 
 SIMULATION_FLAGS := -Xssimulation -DFPGA=1 
+# SIMULATION_FLAGS += -reuse-exe=$(BIN).fpga_sim
 # -reuse-exe=$(BIN).fpga
 # -Xssfc-exit-fifo-type=zero-latency
 

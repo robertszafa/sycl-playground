@@ -19,17 +19,21 @@
 
 using namespace sycl;
 
-enum data_distribution { FORWARDING_FRIENDLY, NO_DEPENDENCIES, RANDOM };
+enum data_distribution { ALL_WAIT, NO_WAIT, PERCENTAGE_WAIT };
 
 void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vector<uint> &hist,
-               data_distribution distr) {
+               const data_distribution distr, const uint percentage) {
+  auto every_n = uint(feature.size() * double(percentage)/100.0);
   for (int i = 0; i < feature.size(); i++) {
-    if (distr == data_distribution::FORWARDING_FRIENDLY)
+    if (distr == data_distribution::ALL_WAIT) {
       feature[i] = (feature.size() >= 4) ? random_indx_1024[i % 1024] : i % feature.size();
-    else if (distr == data_distribution::NO_DEPENDENCIES)
+    }
+    else if (distr == data_distribution::NO_WAIT) {
       feature[i] = i;
-    else
-      feature[i] = rand() % feature.size();
+    }
+    else {
+      feature[i] = (i % every_n == 0 && i > 0) ? feature[i-1] : i;
+    }
 
     weight[i] = (i % 2 == 0) ? 1 : 0;
     hist[i] = 0;
@@ -64,7 +68,8 @@ int main(int argc, char *argv[]) {
   // Get A_SIZE and forward/no-forward from args.
   // defaulats
   uint ARRAY_SIZE = 64;
-  auto DATA_DISTR = data_distribution::FORWARDING_FRIENDLY;
+  auto DATA_DISTR = data_distribution::ALL_WAIT;
+  uint PERCENTAGE = 5;
   try {
     if (argc > 1) {
       ARRAY_SIZE = uint(atoi(argv[1]));
@@ -72,10 +77,15 @@ int main(int argc, char *argv[]) {
     if (argc > 2) {
       DATA_DISTR = data_distribution(atoi(argv[2]));
     }
+    if (argc > 3) {
+      PERCENTAGE = uint(atoi(argv[3]));
+      std::cout << "Percentage is " << PERCENTAGE << "\n";
+      if (PERCENTAGE < 0 || PERCENTAGE > 100) throw std::invalid_argument("Invalid percentage.");
+    }
 }  catch (exception const &e) {
     std::cout << "Incorrect argv.\nUsage:\n";
-    std::cout << "  ./hist [ARRAY_SIZE] [data_distribution (0/1/2)]\n";
-    std::cout << "    0 - forward-friendly, 1 - no dependencies, 2 - random\n";
+    std::cout << "  ./hist [ARRAY_SIZE] [data_distribution (0/1/2)] [PERCENTAGE (only for data_distr 2)]\n";
+    std::cout << "    0 - all_wait, 1 - no_wait, 2 - PERCENTAGE wait\n";
     std::terminate();
   }
 
@@ -103,7 +113,7 @@ int main(int argc, char *argv[]) {
     std::vector<uint> weight(ARRAY_SIZE);
     std::vector<uint> hist(ARRAY_SIZE);
 
-    init_data(feature, weight, hist, DATA_DISTR);
+    init_data(feature, weight, hist, DATA_DISTR, PERCENTAGE);
 
     std::vector<uint> hist_cpu(ARRAY_SIZE);
     std::copy(hist.begin(), hist.end(), hist_cpu.begin());

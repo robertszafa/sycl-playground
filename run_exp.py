@@ -20,26 +20,28 @@ KERNEL_ASIZE_PAIRS_SIM = {
 }
 
 DATA_DISTRIBUTIONS = {
-    0: 'forwarding_friendly',
-    1: 'no_dependencies',
-    2: 'random'
+    0: 'all_wait',
+    1: 'no_wait',
+    2: 'percentage_wait'
 }
 
 Q_SIZES_DYNAMIC = [1, 2, 4, 8, 16]
 Q_SIZES_DYNAMIC_NO_FORWARD = [1, 2, 4, 8, 16, 32, 64]
 
+PERCENTAGE_WAIT = 5
+
 SIM_CYCLES_FILE = 'simulation_raw.json'
 TMP_FILE = '.tmp_run_exp.txt'
 
 
-def run_bin(bin, a_size, distr=0):
-    os.system(f'{bin} {a_size} {distr} > {TMP_FILE}')
+def run_bin(bin, a_size, distr=0, percentage=0):
+    os.system(f'{bin} {a_size} {distr} {percentage} > {TMP_FILE}')
 
     stdout = ''
     with open(TMP_FILE, 'r') as f:
         stdout = str(f.read())
     if not 'Passed' in stdout:
-        print(f' - Fail in {bin} {a_size} {distr}')
+        print(f' - Fail in {bin} {a_size} {distr} {percentage}')
     
     if 'fpga_sim' in bin: 
         # Get cycle count
@@ -76,19 +78,23 @@ if __name__ == '__main__':
             # Ensure dir structure exists
             Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}').mkdir(parents=True, exist_ok=True)
 
-            with open(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{distr_name}_{a_size}.csv', 'w') as f:
+            percentage_suffix = ''
+            if distr_idx == 2:
+                percentage_suffix = f'_{PERCENTAGE_WAIT}'
+            
+            with open(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{distr_name}{percentage_suffix}.csv', 'w') as f:
                 writer = csv.writer(f)
                 writer.writerow(['q_size', 'static', 'dynamic', 'dynamic_no_forward'])
 
-                static_time = run_bin(BINS_STATIC[0], a_size, distr=distr_idx)
+                static_time = run_bin(BINS_STATIC[0], a_size, distr=distr_idx, percentage=PERCENTAGE_WAIT)
 
                 for i, q_size in enumerate(Q_SIZES_DYNAMIC_NO_FORWARD):
                     dyn_time = 0
                     dyn_no_forward_time = 0
                     if len(BINS_DYNAMIC) > i:
-                        dyn_time = run_bin(BINS_DYNAMIC[i], a_size, distr=distr_idx)
+                        dyn_time = run_bin(BINS_DYNAMIC[i], a_size, distr=distr_idx, percentage=PERCENTAGE_WAIT)
                     if len(BINS_DYNAMIC_NO_FORWARD) > i:
-                        dyn_no_forward_time = run_bin(BINS_DYNAMIC_NO_FORWARD[i], a_size, distr=distr_idx)
+                        dyn_no_forward_time = run_bin(BINS_DYNAMIC_NO_FORWARD[i], a_size, distr=distr_idx, percentage=PERCENTAGE_WAIT)
 
                     new_row = []
                     new_row.append(q_size)
@@ -96,6 +102,7 @@ if __name__ == '__main__':
                     new_row.append(dyn_time)
                     new_row.append(dyn_no_forward_time)
                     writer.writerow(new_row)
+        
 
     os.system(f'rm {TMP_FILE}')
 
