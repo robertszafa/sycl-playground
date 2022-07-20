@@ -110,7 +110,7 @@ def make_plot(filename, relative=True, y_label='Speedup (normalised)', title='')
     plt.savefig(filename.replace('csv', 'png'), dpi=300, bbox_inches="tight")
 
 
-def make_plot_all_percentages(filename, relative=True, y_label='Speedup (normalised)', title=''):
+def make_plot_all_percentages(filename, relative=False, y_label='Speedup (normalised)', title=''):
     global fig_id
     global BINS_STATIC
     global BINS_DYNAMIC
@@ -172,7 +172,10 @@ def make_plot_all_percentages(filename, relative=True, y_label='Speedup (normali
     plt.legend(fontsize=14)
     plt.title(title)
 
-    plt.savefig(filename.replace('csv', 'png'), dpi=300, bbox_inches="tight")
+    if relative:
+        plt.savefig(filename.replace('.csv', '_normalised.png'), dpi=300, bbox_inches="tight")
+    else:
+        plt.savefig(filename.replace('csv', 'png'), dpi=300, bbox_inches="tight")
 
 
 
@@ -182,6 +185,7 @@ if __name__ == '__main__':
     SUB_DIR = 'simulation' if is_sim else 'hardware'
     BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
     KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
+    Y_LABEL = 'Cycles' if is_sim else 'Time'
 
     for kernel in KERNEL_ASIZE_PAIRS.keys():
         BINS_STATIC = [f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}']
@@ -207,7 +211,10 @@ if __name__ == '__main__':
         ### Plot speedup vs. % data hazards
         csv_file_all_percentages = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}'
         if Path(csv_file_all_percentages).is_file():
-            make_plot_all_percentages(csv_file_all_percentages,
+            make_plot_all_percentages(csv_file_all_percentages, y_label=Y_LABEL,
+                                    title='Performance at various levels of data hazards')
+
+            make_plot_all_percentages(csv_file_all_percentages, relative=True,
                                     title='Speedup of Store Queue at various levels of data hazards')
 
 
