@@ -32,6 +32,20 @@ def get_freq(bin):
     except:
         return 0
 
+def get_ii(bin):
+    hw_prj = bin.replace('_sim', '') + '.prj'
+    try:
+        with open(f'{hw_prj}/reports/lib/json/loops.json', 'r') as f:
+            contents = f.read()
+            m = re.findall(r'\["Yes", "~?(\d+)"', contents)
+            max = 1
+            for s in m:
+                max = max if max > int(s) else int(s)
+            
+            return max
+    except:
+        print(bin, ' no ii')
+        return 1
 
 def make_plot(filename, relative=True, y_label='Execution time (normalised)', title=''):
     global fig_id
@@ -68,17 +82,20 @@ def make_plot(filename, relative=True, y_label='Execution time (normalised)', ti
     # Add frequencies as
     if not 'sim' in filename:
         freq = get_freq(BINS_STATIC[0])
-        plt.text(x[len(x) - 1], y[len(y) - 1], f'{freq} MHz', fontsize='x-small', fontstyle='italic')
+        ii = get_ii(BINS_STATIC[0])
+        plt.text(x[len(x) - 1], y[len(y) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic')
 
         for i in range(len(BINS_DYNAMIC)):
             freq = get_freq(BINS_DYNAMIC[i])
+            ii = get_ii(BINS_DYNAMIC[i])
             if not np.isnan(y2[i]):
-                plt.text(x2[i], y2[i], f'{freq} MHz', fontsize='x-small', fontstyle='italic', verticalalignment='top')
+                plt.text(x2[i], y2[i], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic')
 
         for i in range(len(BINS_DYNAMIC_NO_FORWARD)):
             freq = get_freq(BINS_DYNAMIC_NO_FORWARD[i])
+            ii = get_ii(BINS_DYNAMIC_NO_FORWARD[i])
             if not np.isnan(y3[i]):
-                plt.text(x3[i], y3[i], f'{freq} MHz', fontsize='x-small', fontstyle='italic', verticalalignment='bottom')
+                plt.text(x3[i], y3[i], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic') 
 
     xticks = Q_SIZES_DYNAMIC_NO_FORWARD
     plt.xticks(ticks=xticks, labels=xticks)
@@ -113,18 +130,18 @@ def make_plot_all_percentages(filename, relative=True, y_label='Execution time (
     if relative:
         static_baseline = y[0]
         y = [1 for _ in df['static']]
-        y2 = [val/static_baseline for val in y2]
-        y3 = [val/static_baseline for val in y3]
+        y2 = [static_baseline/val for val in y2]
+        y3 = [static_baseline/val for val in y3]
 
     # plot
     fig = plt.figure(fig_id, figsize=(8, 8))
-    plt.semilogx(x3, y3, linestyle='-', marker='^', 
+    plt.plot(x3, y3, linestyle='-', marker='^', 
                  label=f'dynamic (no forwarding, q_size {Q_SIZE_DYNAMIC_NO_FORWARD})',
                  color=colors[2], mfc='w', markersize=8)
-    plt.semilogx(x2, y2, linestyle='-', marker='s', 
+    plt.plot(x2, y2, linestyle='-', marker='s', 
                  label=f'dynamic (forwarding, q_size {Q_SIZE_DYNAMIC})',
                  color=colors[1], mfc='w', markersize=8)
-    plt.semilogx(x, y, linestyle='-', marker='o', label='static',
+    plt.plot(x, y, linestyle='-', marker='o', label='static',
                  color=colors[0], mfc='w', markersize=8)
 
     # Add frequencies as
@@ -142,10 +159,10 @@ def make_plot_all_percentages(filename, relative=True, y_label='Execution time (
             if not np.isnan(y3[i]):
                 plt.text(x3[i], y3[i], f'{freq} MHz', fontsize='x-small', fontstyle='italic', verticalalignment='bottom')
 
-    xticks = Q_SIZES_DYNAMIC_NO_FORWARD
+    xticks = PERCENTAGES_WAIT
     plt.xticks(ticks=xticks, labels=xticks)
 
-    plt.xlabel(r'Queue size', fontsize=14)
+    plt.xlabel(r'% of data dependencies', fontsize=14)
     plt.ylabel(y_label, fontsize=14)  # label the y axis
 
     # add the legend (will default to 'best' location)
@@ -162,7 +179,7 @@ if __name__ == '__main__':
     SUB_DIR = 'simulation' if is_sim else 'hardware'
     BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
     KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
-    Y_LABEL = 'Cycles' if is_sim else 'Time (ms)'
+    Y_LABEL = 'Cycles' if is_sim else 'Time'
     Y_LABEL += ' (normalised)'
 
     for kernel in KERNEL_ASIZE_PAIRS.keys():
@@ -186,5 +203,10 @@ if __name__ == '__main__':
             make_plot(csv_fname, y_label=Y_LABEL, title=f'Data distribution {distr_name} {percentage_suffix_title}')
 
 
-    # if Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}').is_file():
+        ### Plot speedup vs. % data hazards
+        csv_file_all_percentages = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}'
+        if Path(csv_file_all_percentages).is_file():
+            make_plot_all_percentages(csv_file_all_percentages, y_label=Y_LABEL, 
+                                    title='Speedup of Store Queue at various levels of data hazards')
+
 
