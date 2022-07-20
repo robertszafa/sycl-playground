@@ -8,8 +8,8 @@ from pathlib import Path
 # Keep parameters synced
 from run_exp import (EXP_DATA_DIR, Q_SIZES_DYNAMIC, Q_SIZES_DYNAMIC_NO_FORWARD, DATA_DISTRIBUTIONS,
                      KERNEL_ASIZE_PAIRS, KERNEL_ASIZE_PAIRS_SIM, PERCENTAGE_WAIT)
-from run_exp_all_percentages import (CSV_PERCENTAGES_RES_FILE, PERCENTAGES_WAIT,
-                                     Q_SIZE_DYNAMIC, Q_SIZE_DYNAMIC_NO_FORWARD)
+from run_exp_all_percentages import (CSV_PERCENTAGES_RES_FILE, PERCENTAGES_WAIT, Q_SIZE_DYNAMIC, 
+                                     Q_SIZE_DYNAMIC_NO_FORWARD)
 
 plt.rcParams['font.size'] = 14
 # colors = seaborn.color_palette("rocket", 3)
@@ -47,7 +47,7 @@ def get_ii(bin):
         print(bin, ' no ii')
         return 1
 
-def make_plot(filename, relative=True, y_label='Execution time (normalised)', title=''):
+def make_plot(filename, relative=True, y_label='Speedup (normalised)', title=''):
     global fig_id
     global BINS_STATIC
     global BINS_DYNAMIC
@@ -110,7 +110,7 @@ def make_plot(filename, relative=True, y_label='Execution time (normalised)', ti
     plt.savefig(filename.replace('csv', 'png'), dpi=300, bbox_inches="tight")
 
 
-def make_plot_all_percentages(filename, relative=True, y_label='Execution time (normalised)', title=''):
+def make_plot_all_percentages(filename, relative=True, y_label='Speedup (normalised)', title=''):
     global fig_id
     global BINS_STATIC
     global BINS_DYNAMIC
@@ -147,17 +147,20 @@ def make_plot_all_percentages(filename, relative=True, y_label='Execution time (
     # Add frequencies as
     if not 'sim' in filename:
         freq = get_freq(BINS_STATIC[0])
-        plt.text(x[len(x) - 1], y[len(y) - 1], f'{freq} MHz', fontsize='x-small', fontstyle='italic')
+        ii = get_ii(BINS_STATIC[0])
+        plt.text(x[len(x) - 1], y[len(y) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic')
 
         for i in range(len(BINS_DYNAMIC)):
-            freq = get_freq(BINS_DYNAMIC[i])
-            if not np.isnan(y2[i]):
-                plt.text(x2[i], y2[i], f'{freq} MHz', fontsize='x-small', fontstyle='italic', verticalalignment='top')
+            if Q_SIZES_DYNAMIC[i] == Q_SIZE_DYNAMIC:
+                freq = get_freq(BINS_DYNAMIC[i])
+                ii = get_ii(BINS_DYNAMIC[i])
+                plt.text(x2[len(x2) - 1], y2[len(y2) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic')
 
         for i in range(len(BINS_DYNAMIC_NO_FORWARD)):
-            freq = get_freq(BINS_DYNAMIC_NO_FORWARD[i])
-            if not np.isnan(y3[i]):
-                plt.text(x3[i], y3[i], f'{freq} MHz', fontsize='x-small', fontstyle='italic', verticalalignment='bottom')
+            if Q_SIZES_DYNAMIC_NO_FORWARD[i] == Q_SIZE_DYNAMIC_NO_FORWARD:
+                freq = get_freq(BINS_DYNAMIC_NO_FORWARD[i])
+                ii = get_ii(BINS_DYNAMIC_NO_FORWARD[i])
+                plt.text(x3[len(x3) - 1], y3[len(y3) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic') 
 
     xticks = PERCENTAGES_WAIT
     plt.xticks(ticks=xticks, labels=xticks)
@@ -179,8 +182,6 @@ if __name__ == '__main__':
     SUB_DIR = 'simulation' if is_sim else 'hardware'
     BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
     KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
-    Y_LABEL = 'Cycles' if is_sim else 'Time'
-    Y_LABEL += ' (normalised)'
 
     for kernel in KERNEL_ASIZE_PAIRS.keys():
         BINS_STATIC = [f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}']
@@ -200,13 +201,13 @@ if __name__ == '__main__':
 
             csv_fname = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{distr_name}{percentage_suffix}.csv'
 
-            make_plot(csv_fname, y_label=Y_LABEL, title=f'Data distribution {distr_name} {percentage_suffix_title}')
+            make_plot(csv_fname, title=f'Data distribution {distr_name} {percentage_suffix_title}')
 
 
         ### Plot speedup vs. % data hazards
         csv_file_all_percentages = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}'
         if Path(csv_file_all_percentages).is_file():
-            make_plot_all_percentages(csv_file_all_percentages, y_label=Y_LABEL, 
+            make_plot_all_percentages(csv_file_all_percentages,
                                     title='Speedup of Store Queue at various levels of data hazards')
 
 
