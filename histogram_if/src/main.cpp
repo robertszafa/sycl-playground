@@ -32,7 +32,7 @@ void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vecto
       feature[i] = i;
     }
     else {
-      feature[i] = (i % every_n == 0 && i > 0) ? feature[i-1] : i;
+      feature[i] = (rand() % 100) < percentage ? std::max(i-1, 0) : i;
     }
 
     weight[i] = (i % 2 == 0) ? 1 : 0;
