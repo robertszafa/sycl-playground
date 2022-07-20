@@ -3,9 +3,9 @@
 #include <iostream>
 #include <numeric>
 #include <vector>
-#if FPGA || FPGA_EMULATOR
-  #include <sycl/ext/intel/fpga_extensions.hpp>
-#endif
+#include <random>
+
+#include <sycl/ext/intel/fpga_extensions.hpp>
 
 #if static_sched
   #include "kernel_static.hpp"
@@ -36,6 +36,10 @@ static auto exception_handler = [](sycl::exception_list e_list) {
 void init_data(std::vector<float> &matrix, std::vector<float> &a, std::vector<int> &col_index,
                std::vector<int> &row_ptr, const uint M, const data_distribution distr, 
                const uint percentage) {
+  std::default_random_engine generator;
+  std::uniform_int_distribution<int> distribution(0, 100);
+  auto dice = std::bind (distribution, generator);
+
   for (int r = 0; r < M; ++r) {
 
     if (distr == data_distribution::ALL_WAIT) {
@@ -47,8 +51,8 @@ void init_data(std::vector<float> &matrix, std::vector<float> &a, std::vector<in
       row_ptr[r] = r;
     }
     else {
-      col_index[r] = (rand() % 100) < percentage ? std::max(r-1, 0) : r;
-      row_ptr[r] = (rand() % 100) < percentage  ? std::max(r-1, 0) : r;
+      col_index[r] = (dice() <= percentage) ? col_index[std::max(r-1, 0)] : r;
+      row_ptr[r] = (dice() <= percentage)  ? row_ptr[std::max(r-1, 0)] : r;
     }
 
     a[r] = float(1);

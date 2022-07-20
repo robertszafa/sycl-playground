@@ -4,6 +4,7 @@
 #include <numeric>
 #include <stdlib.h>
 #include <vector>
+#include <random>
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
@@ -23,6 +24,11 @@ enum data_distribution { ALL_WAIT, NO_WAIT, PERCENTAGE_WAIT };
 
 void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vector<uint> &hist,
                const data_distribution distr, const uint percentage) {
+  std::default_random_engine generator;
+  std::uniform_int_distribution<int> distribution(0, 100);
+  auto dice = std::bind (distribution, generator);
+
+  uint counter=0;
   for (int i = 0; i < feature.size(); i++) {
     if (distr == data_distribution::ALL_WAIT) {
       feature[i] = (feature.size() >= 4) ? random_indx_1024[i % 1024] : i % feature.size();
@@ -31,7 +37,7 @@ void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vecto
       feature[i] = i;
     }
     else {
-      feature[i] = (rand() % 100) < percentage ? std::max(i-1, 0) : i;
+      feature[i] = (dice() <= percentage) ? feature[std::max(i-1, 0)] : i;
     }
 
     weight[i] = (i % 2 == 0) ? 1 : 0;
