@@ -36,7 +36,7 @@ static auto exception_handler = [](sycl::exception_list e_list) {
 void init_data(std::vector<float> &matrix, std::vector<float> &a, std::vector<int> &col_index,
                std::vector<int> &row_ptr, const uint M, const data_distribution distr, 
                const uint percentage) {
-  auto every_n = uint(M * double(percentage)/100.0);
+  auto every_n = uint(double(M) / (double(M) * (double(percentage)/100.0)));
 
   for (int r = 0; r < M; ++r) {
 
@@ -49,8 +49,8 @@ void init_data(std::vector<float> &matrix, std::vector<float> &a, std::vector<in
       row_ptr[r] = r;
     }
     else {
-      col_index[r] = (r % every_n == 0 && r > 0) ? r-1 : r;
-      row_ptr[r] = (r % every_n == 0 && r > 0) ? r-1 : r;
+      col_index[r] = (r % (every_n-1) == 0 && r > 0) ? r-1 : r;
+      row_ptr[r] = (r % (every_n-1) == 0 && r > 0) ? r-1 : r;
     }
 
     a[r] = float(1);

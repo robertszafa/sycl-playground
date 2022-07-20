@@ -23,7 +23,7 @@ enum data_distribution { ALL_WAIT, NO_WAIT, PERCENTAGE_WAIT };
 
 void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vector<uint> &hist,
                const data_distribution distr, const uint percentage) {
-  auto every_n = uint(feature.size() * double(percentage)/100.0);
+  auto every_n = uint(double(feature.size()) / (double(feature.size()) * (double(percentage)/100.0)));
   for (int i = 0; i < feature.size(); i++) {
     if (distr == data_distribution::ALL_WAIT) {
       feature[i] = (feature.size() >= 4) ? random_indx_1024[i % 1024] : i % feature.size();
