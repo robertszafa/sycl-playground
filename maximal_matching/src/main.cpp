@@ -34,8 +34,10 @@ void init_data(std::vector<int> &edges, std::vector<int> &vertices, data_distrib
   vertices[1] = -1;
   for (int i = 2; i < num_edges*2; i += 2) {
     if (distr == data_distribution::ALL_WAIT) {
-      edges[i] = edges[i-2];
-      edges[i+1] = edges[i-1];
+      edges[0] = 0;
+      edges[1] = 2;
+      edges[i] = i-2;
+      edges[i+1] = i;
     }
     else if (distr == data_distribution::NO_WAIT) {
       edges[i] = i;
