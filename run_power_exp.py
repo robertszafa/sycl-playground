@@ -17,6 +17,7 @@ KERNEL_ASIZE_PAIRS = {
     'histogram' : 400000000,
     'histogram_if' : 400000000,
     'spmv' : 16000,
+    'maximal_matching' : 400000000,
 }
 
 def get_fpga_watts_now():

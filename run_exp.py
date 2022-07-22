@@ -11,12 +11,14 @@ KERNEL_ASIZE_PAIRS = {
     'histogram' : 1000000,
     'histogram_if' : 1000000,
     'spmv' : 400,
+    'maximal_matching' : 1000000,
 }
 # Decrease domain sizes when running in simulation.
 KERNEL_ASIZE_PAIRS_SIM = {
     'histogram' : 1000,
     'histogram_if' : 1000,
     'spmv' : 20,
+    'maximal_matching' : 1000,
 }
 
 DATA_DISTRIBUTIONS = {
