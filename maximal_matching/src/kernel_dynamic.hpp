@@ -78,16 +78,14 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         int u = edges[j];
         int v = edges[j + 1];
 
-        u_load_pipe::write({u, i});
-        v_load_pipe::write({v, i});
-        
-        PRINTF("i_%d: load u %d   v %d\n", i, u, v);
+        u_pipe::write(u);
+        v_pipe::write(v);
 
         i = i + 1;
       }
     });
   });
-  
+
   q.submit([&](handler &hnd) {
     accessor edges(edges_buf, hnd, read_only);
 
@@ -100,73 +98,39 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         int u = edges[j];
         int v = edges[j + 1];
 
-        u_pipe::write(u);
-        v_pipe::write(v);
-      }
-    });
-  });
-
-  auto event = q.submit([&](handler &hnd) {
-    accessor out_pointer(out_buf, hnd, write_only);
-
-    hnd.single_task<class IfCondition>([=]() [[intel::kernel_args_restrict]] {
-      int i = 0;
-      int out = 0;
-      while (i < num_edges) {
-        auto vertex_u = vertex_u_pipe::read();
-        auto vertex_v = vertex_v_pipe::read();
-
-        PRINTF("i_%d: vertex[u] %d   vertex[v]%d\n", i, vertex_u, vertex_v);
-
-        auto u = u_pipe::read();
-        auto v = v_pipe::read();
-
-        if ((vertex_u < 0) && (vertex_v < 0)) {
-          u_store_idx_pipe::write({u, i});
-          v_store_idx_pipe::write({v, i});
-
-          u_store_val_pipe::write(v);
-          v_store_val_pipe::write(u);
-
-          out += 1;
-        }
+        u_load_pipe::write({u, i});
+        v_load_pipe::write({v, i});
 
         i = i + 1;
       }
-
-      end_lsq_signal_pipe::write(1);
-      out_pointer[0] = out;
-      PRINTF("Finished IfCondition\n")
     });
   });
-
-
+  
   q.submit([&](handler &hnd) {
     accessor vertices(vertices_buf, hnd, read_write);
 
     hnd.single_task<class LSQ>([=]() [[intel::kernel_args_restrict]] {
       [[intel::fpga_register]] store_entry store_entries[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, idx_into_x} pairs.
-      [[intel::fpga_register]] pair store_idx_1_fifo[STORE_Q_SIZE];
-      [[intel::fpga_register]] pair store_idx_2_fifo[STORE_Q_SIZE];
+      [[intel::fpga_register]] pair store_1_idx_fifo[STORE_Q_SIZE];
+      [[intel::fpga_register]] pair store_2_idx_fifo[STORE_Q_SIZE];
 
       #pragma unroll
       for (uint i=0; i<STORE_Q_SIZE; ++i) {
-        store_entries[i] = {-1, -1, -1, -1};
+        store_entries[i] = {-1, -1, -1, 0};
       }
 
       int i_store_1_val = 0;
-      int i_store_2_val = 0;
       int i_store_1_idx = 0;
-      int i_store_2_idx = 0;
-      int store_idx_1_fifo_head = 0;
-      int store_idx_2_fifo_head = 0;
-
+      int store_1_idx_fifo_head = 0;
       int tag_store_1 = 0;
       int idx_store_1;
       int val_store_1;
       pair idx_tag_pair_store_1;
 
+      int i_store_2_val = 0;
+      int i_store_2_idx = 0;
+      int store_2_idx_fifo_head = 0;
       int tag_store_2 = 0;
       int idx_store_2;
       int val_store_2;
@@ -191,8 +155,8 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         /* Start Load 1 Logic */
         auto max_tag_store = max(tag_store_1, tag_store_2);
         // PRINTF("max_tag_store: %d\n", max_tag_store);
-        // PRINTF("tag_load_1: %d\n", tag_load_1);
-        // PRINTF("tag_load_2: %d\n", tag_load_2);
+        // PRINTF("i_store_val_1: %d\n", i_store_1_val);
+        // PRINTF("i_store_val_2: %d\n", i_store_2_val);
 
         if (tag_load_1 <= max_tag_store && try_val_load_1_pipe_write) {
           bool idx_load_pipe_succ = false;
@@ -210,7 +174,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
               auto st_entry = store_entries[i];
-              if (st_entry.idx == idx_load_1 && st_entry.tag < tag_load_1 && st_entry.tag > max_tag) {
+              if (st_entry.idx == idx_load_1 && st_entry.tag < tag_load_1 && st_entry.tag > max_tag ) {
                 _is_load_1_waiting = (st_entry.countdown == -1);
                 val_load_1 = st_entry.val;
                 max_tag = st_entry.tag;
@@ -283,7 +247,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         }
 
         bool idx_store_1_pipe_succ = false;
-        if (next_entry_slot_1 != -1 && store_idx_1_fifo_head < STORE_Q_SIZE) {
+        if (next_entry_slot_1 != -1 && store_1_idx_fifo_head < STORE_Q_SIZE) {
           idx_tag_pair_store_1 = u_store_idx_pipe::read(idx_store_1_pipe_succ);
         }
 
@@ -291,10 +255,10 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
           idx_store_1 = idx_tag_pair_store_1.fst;
           tag_store_1 = idx_tag_pair_store_1.snd;
           store_entries[next_entry_slot_1] = {idx_store_1, tag_store_1, -1};
-          store_idx_1_fifo[store_idx_1_fifo_head] = {next_entry_slot_1, idx_store_1};
+          store_1_idx_fifo[store_1_idx_fifo_head] = {next_entry_slot_1, idx_store_1};
 
           i_store_1_idx++;
-          store_idx_1_fifo_head++;
+          store_1_idx_fifo_head++;
         }
         
         bool val_store_1_pipe_succ = false;
@@ -303,16 +267,16 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         }
 
         if (val_store_1_pipe_succ) {
-          auto entry_slot_and_idx_pair = store_idx_1_fifo[0];           
+          auto entry_slot_and_idx_pair = store_1_idx_fifo[0];           
           PipelinedLSU::store(vertices.get_pointer() + entry_slot_and_idx_pair.snd, val_store_1);
           store_entries[entry_slot_and_idx_pair.fst].val = val_store_1;
           store_entries[entry_slot_and_idx_pair.fst].countdown = STORE_LATENCY;
 
           #pragma unroll
           for (uint i=1; i<STORE_Q_SIZE; ++i) {
-            store_idx_1_fifo[i-1] = store_idx_1_fifo[i];
+            store_1_idx_fifo[i-1] = store_1_idx_fifo[i];
           }
-          store_idx_1_fifo_head--;
+          store_1_idx_fifo_head--;
 
           i_store_1_val++;
         }
@@ -328,7 +292,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         }
 
         bool idx_store_2_pipe_succ = false;
-        if (next_entry_slot_2 != -1 && store_idx_2_fifo_head < STORE_Q_SIZE) {
+        if (next_entry_slot_2 != -1 && store_2_idx_fifo_head < STORE_Q_SIZE) {
           idx_tag_pair_store_2 = v_store_idx_pipe::read(idx_store_2_pipe_succ);
         }
 
@@ -336,10 +300,10 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
           idx_store_2 = idx_tag_pair_store_2.fst;
           tag_store_2 = idx_tag_pair_store_2.snd;
           store_entries[next_entry_slot_2] = {idx_store_2, tag_store_2, -1};
-          store_idx_2_fifo[store_idx_2_fifo_head] = {next_entry_slot_2, idx_store_2};
+          store_2_idx_fifo[store_2_idx_fifo_head] = {next_entry_slot_2, idx_store_2};
 
           i_store_2_idx++;
-          store_idx_2_fifo_head++;
+          store_2_idx_fifo_head++;
         }
         
         bool val_store_2_pipe_succ = false;
@@ -348,16 +312,16 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         }
 
         if (val_store_2_pipe_succ) {
-          auto entry_slot_and_idx_pair = store_idx_2_fifo[0];           
+          auto entry_slot_and_idx_pair = store_2_idx_fifo[0];           
           PipelinedLSU::store(vertices.get_pointer() + entry_slot_and_idx_pair.snd, val_store_2);
           store_entries[entry_slot_and_idx_pair.fst].val = val_store_2;
           store_entries[entry_slot_and_idx_pair.fst].countdown = STORE_LATENCY;
 
           #pragma unroll
           for (uint i=1; i<STORE_Q_SIZE; ++i) {
-            store_idx_2_fifo[i-1] = store_idx_2_fifo[i];
+            store_2_idx_fifo[i-1] = store_2_idx_fifo[i];
           }
-          store_idx_2_fifo_head--;
+          store_2_idx_fifo_head--;
 
           i_store_2_val++;
         }
@@ -366,6 +330,39 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         if (!end_signal) end_lsq_signal_pipe::read(end_signal);
       }
 
+    });
+  });
+
+  auto event = q.submit([&](handler &hnd) {
+    accessor out_pointer(out_buf, hnd, write_only);
+
+    hnd.single_task<class Calculation>([=]() [[intel::kernel_args_restrict]] {
+      int i = 0;
+      int out = 0;
+      while (i < num_edges) {
+        auto u = u_pipe::read();
+        auto v = v_pipe::read();
+        
+        auto vertex_u = vertex_u_pipe::read();
+        auto vertex_v = vertex_v_pipe::read();
+
+        if ((vertex_u < 0) && (vertex_v < 0)) {
+          PRINTF("TO SQ u %d v %d\n", u, v);
+          u_store_idx_pipe::write({u, i});
+          v_store_idx_pipe::write({v, i});
+
+          u_store_val_pipe::write(v);
+          v_store_val_pipe::write(u);
+
+          out += 1;
+        }
+
+        i = i + 1;
+      }
+
+      end_lsq_signal_pipe::write(1);
+      out_pointer[0] = out;
+      PRINTF("Finished Calculation\n")
     });
   });
 

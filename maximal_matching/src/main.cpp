@@ -4,6 +4,7 @@
 #include <numeric>
 #include <stdlib.h>
 #include <vector>
+#include <random>
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
@@ -19,21 +20,30 @@
 
 using namespace sycl;
 
-enum data_distribution { FORWARDING_FRIENDLY, NO_DEPENDENCIES, RANDOM };
+enum data_distribution { ALL_WAIT, NO_WAIT, PERCENTAGE_WAIT };
 
-void init_data(std::vector<int> &edges, std::vector<int> &vertices, data_distribution distr, const int num_edges) {
-  for (int i = 0; i < num_edges*2; i += 2) {
-    if (distr == data_distribution::FORWARDING_FRIENDLY) {
-      edges[i] = (num_edges >= 8) ? random_indx_1024[i % 1024] : i % num_edges;
-      edges[i+1] = (num_edges >= 8) ? random_indx_1024[(i+1) % 1024] : i % num_edges;
+void init_data(std::vector<int> &edges, std::vector<int> &vertices, data_distribution distr, 
+               const int num_edges, const uint percentage) {
+  std::default_random_engine generator;
+  std::uniform_int_distribution<int> distribution(0, 100);
+  auto dice = std::bind (distribution, generator);
+
+  edges[0] = 0;
+  edges[1] = 1;
+  vertices[0] = -1;
+  vertices[1] = -1;
+  for (int i = 2; i < num_edges*2; i += 2) {
+    if (distr == data_distribution::ALL_WAIT) {
+      edges[i] = edges[i-2];
+      edges[i+1] = edges[i-1];
     }
-    else if (distr == data_distribution::NO_DEPENDENCIES) {
+    else if (distr == data_distribution::NO_WAIT) {
       edges[i] = i;
       edges[i+1] = i+1;
     }
     else {
-      edges[i] = rand() % num_edges;
-      edges[i+1] = rand() % num_edges;
+      edges[i] = (dice() <= percentage) ? edges[i-2] : i;
+      edges[i+1] = (dice() <= percentage) ? edges[i-1] : i+1;
     }
 
     vertices[i] = -1;
@@ -83,18 +93,25 @@ int main(int argc, char *argv[]) {
   // Get A_SIZE and forward/no-forward from args.
   // defaulats
   uint NUM_EDGES = 64;
-  auto DATA_DISTR = data_distribution::FORWARDING_FRIENDLY;
+  auto DATA_DISTR = data_distribution::ALL_WAIT;
+  uint PERCENTAGE = 5;
   try {
     if (argc > 1) {
       NUM_EDGES = uint(atoi(argv[1]));
+      if (NUM_EDGES < 2) throw std::invalid_argument("At least 2 edges rq.");
     }
     if (argc > 2) {
       DATA_DISTR = data_distribution(atoi(argv[2]));
     }
-}  catch (exception const &e) {
+    if (argc > 3) {
+      PERCENTAGE = uint(atoi(argv[3]));
+      std::cout << "Percentage is " << PERCENTAGE << "\n";
+      if (PERCENTAGE < 0 || PERCENTAGE > 100) throw std::invalid_argument("Invalid percentage.");
+    }
+  }  catch (exception const &e) {
     std::cout << "Incorrect argv.\nUsage:\n";
-    std::cout << "  ./hist [NUM_EDGES] [data_distribution (0/1/2)]\n";
-    std::cout << "    0 - forward-friendly, 1 - no dependencies, 2 - random\n";
+    std::cout << "  ./mm [ARRAY_SIZE] [data_distribution (0/1/2)] [PERCENTAGE (only for data_distr 2)]\n";
+    std::cout << "    0 - all_wait, 1 - no_wait, 2 - PERCENTAGE wait\n";
     std::terminate();
   }
 
@@ -121,7 +138,7 @@ int main(int argc, char *argv[]) {
     std::vector<int> edges(NUM_EDGES*2);
     std::vector<int> vertices(NUM_EDGES*2);
 
-    init_data(edges, vertices, DATA_DISTR, NUM_EDGES);
+    init_data(edges, vertices, DATA_DISTR, NUM_EDGES, PERCENTAGE);
 
     std::vector<int> vertices_cpu(NUM_EDGES*2);
     std::copy(vertices.begin(), vertices.end(), vertices_cpu.begin());
