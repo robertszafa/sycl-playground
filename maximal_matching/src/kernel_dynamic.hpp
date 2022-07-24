@@ -29,7 +29,9 @@ using PipelinedLSU = ext::intel::lsu<>;
 #endif
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 12; // This should be gotten from static analysis.
+// This should be gotten from static analysis.
+// The value should be unique for each store.
+constexpr uint STORE_LATENCY = 12; 
 
 struct pair {
   int fst; 
@@ -118,14 +120,16 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
     accessor vertices(vertices_buf, hnd, read_write);
 
     hnd.single_task<class LSQ>([=]() [[intel::kernel_args_restrict]] {
-      [[intel::fpga_register]] store_entry store_entries[STORE_Q_SIZE];
+      [[intel::fpga_register]] store_entry store_entries_1[STORE_Q_SIZE];
+      [[intel::fpga_register]] store_entry store_entries_2[STORE_Q_SIZE];
       // A FIFO of {idx_into_store_q, idx_into_x} pairs.
       [[intel::fpga_register]] pair store_1_idx_fifo[STORE_Q_SIZE];
       [[intel::fpga_register]] pair store_2_idx_fifo[STORE_Q_SIZE];
 
       #pragma unroll
       for (uint i=0; i<STORE_Q_SIZE; ++i) {
-        store_entries[i] = {-1, -2, -2, -1, 0};
+        store_entries_1[i] = {-1, -2, -2, -1, 0};
+        store_entries_2[i] = {-1, -2, -2, -1, 0};
       }
 
       int i_store_1_val = 0;
@@ -165,7 +169,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
       bool end_signal = false;
 
       [[intel::ivdep]] 
-      while (!end_signal || i_store_1_idx > i_store_1_val || i_store_2_idx > i_store_2_val) {
+      while (!end_signal) {// || i_store_1_idx > i_store_1_val || i_store_2_idx > i_store_2_val) {
         // Load tags should not overtake the most recent store_idx tag.
         auto max_tag_store = max(tag0_store_1, tag0_store_2);
 
@@ -181,25 +185,47 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
             idx_load_1 = idx_tag_pair_load_1.fst;
             tag_load_1 = idx_tag_pair_load_1.snd;
 
-            bool _is_load_1_waiting = false;
-            pair max_tag = {-1, -1}; 
+            bool _is_load_1_waiting_on_st_1 = false;
+            pair max_tag_1 = {-1, -1}; 
+            uint val_st1;
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
-              auto st_entry = store_entries[i];
+              auto st_entry = store_entries_1[i];
               if (st_entry.idx == idx_load_1 && st_entry.tag0 < tag_load_1 && 
-                  st_entry.tag0 >= max_tag.fst && st_entry.tag1 > max_tag.snd) {
-                _is_load_1_waiting = (st_entry.countdown == -1);
-                val_load_1 = st_entry.val;
-                max_tag = {st_entry.tag0, st_entry.tag1};
+                  st_entry.tag0 >= max_tag_1.fst && st_entry.tag1 > max_tag_1.snd) {
+                _is_load_1_waiting_on_st_1 = (st_entry.countdown == -1);
+                val_st1 = st_entry.val;
+                max_tag_1 = {st_entry.tag0, st_entry.tag1};
               }
             }
+            bool _is_load_1_waiting_on_st_2 = false;
+            pair max_tag_2 = {-1, -1}; 
+            uint val_st2;
+            #pragma unroll
+            for (uint i=0; i<STORE_Q_SIZE; ++i) {
+              auto st_entry = store_entries_2[i];
+              if (st_entry.idx == idx_load_1 && st_entry.tag0 < tag_load_1 && 
+                  st_entry.tag0 >= max_tag_2.fst && st_entry.tag1 > max_tag_2.snd) {
+                _is_load_1_waiting_on_st_2 = (st_entry.countdown == -1);
+                val_st2 = st_entry.val;
+                max_tag_2 = {st_entry.tag0, st_entry.tag1};
+              }
+            }
+            is_load_1_waiting = _is_load_1_waiting_on_st_1 || _is_load_1_waiting_on_st_2;
 
-            if (!_is_load_1_waiting && max_tag.fst == -1) {
+            pair max_tag = {-1, -1}; 
+            if (max_tag_1.fst > max_tag_2.fst) 
+              max_tag = max_tag_1; 
+            else if (max_tag_1.fst < max_tag_2.fst) 
+              max_tag = max_tag_2; 
+            else 
+              max_tag = (max_tag_1.snd >= max_tag_2.snd) ? max_tag_1 : max_tag_2; 
+
+            if (!is_load_1_waiting && max_tag.fst == -1) {
               val_load_1 = PipelinedLSU::load(vertices.get_pointer() + idx_load_1);
             }
 
-            is_load_1_waiting = _is_load_1_waiting;
-            try_val_load_1_pipe_write = _is_load_1_waiting;
+            try_val_load_1_pipe_write = is_load_1_waiting;
           }
         }
         if (!try_val_load_1_pipe_write) {
@@ -219,25 +245,47 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
             idx_load_2 = idx_tag_pair_load_2.fst;
             tag_load_2 = idx_tag_pair_load_2.snd;
 
-            bool _is_load_2_waiting = false;
-            pair max_tag = {-1, -1}; // Could be two stores in the same iteration.
+            bool _is_load_2_waiting_on_st_1 = false;
+            pair max_tag_1 = {-1, -1}; 
+            uint val_st1;
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
-              auto st_entry = store_entries[i];
+              auto st_entry = store_entries_1[i];
               if (st_entry.idx == idx_load_2 && st_entry.tag0 < tag_load_2 && 
-                  st_entry.tag0 >= max_tag.fst && st_entry.tag1 > max_tag.snd) {
-                _is_load_2_waiting = (st_entry.countdown == -1);
-                val_load_2 = st_entry.val;
-                max_tag = {st_entry.tag0, st_entry.tag1};
+                  st_entry.tag0 >= max_tag_1.fst && st_entry.tag1 > max_tag_1.snd) {
+                _is_load_2_waiting_on_st_1 = (st_entry.countdown == -1);
+                val_st1 = st_entry.val;
+                max_tag_1 = {st_entry.tag0, st_entry.tag1};
               }
             }
+            bool _is_load_2_waiting_on_st_2 = false;
+            pair max_tag_2 = {-1, -1}; 
+            uint val_st2;
+            #pragma unroll
+            for (uint i=0; i<STORE_Q_SIZE; ++i) {
+              auto st_entry = store_entries_2[i];
+              if (st_entry.idx == idx_load_2 && st_entry.tag0 < tag_load_2 && 
+                  st_entry.tag0 >= max_tag_2.fst && st_entry.tag1 > max_tag_2.snd) {
+                _is_load_2_waiting_on_st_2 = (st_entry.countdown == -1);
+                val_st2 = st_entry.val;
+                max_tag_2 = {st_entry.tag0, st_entry.tag1};
+              }
+            }
+            is_load_2_waiting = _is_load_2_waiting_on_st_1 || _is_load_2_waiting_on_st_2;
 
-            if (!_is_load_2_waiting && max_tag.fst == -1) {
+            pair max_tag = {-1, -1}; 
+            if (max_tag_1.fst > max_tag_2.fst) 
+              max_tag = max_tag_1; 
+            else if (max_tag_1.fst < max_tag_2.fst) 
+              max_tag = max_tag_2; 
+            else 
+              max_tag = (max_tag_1.snd >= max_tag_2.snd) ? max_tag_1 : max_tag_2; 
+
+            if (!is_load_2_waiting && max_tag.fst == -1) {
               val_load_2 = PipelinedLSU::load(vertices.get_pointer() + idx_load_2);
             }
 
-            is_load_2_waiting = _is_load_2_waiting;
-            try_val_load_2_pipe_write = _is_load_2_waiting;
+            try_val_load_2_pipe_write = is_load_2_waiting;
           }
         }
         if (!try_val_load_2_pipe_write) {
@@ -248,14 +296,14 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         /* Start Store 1 Logic */
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          const int count = store_entries[i].countdown;
-          if (count > 0) store_entries[i].countdown--;
-          if (count <= 1) store_entries[i].idx = -1;
+          const int count = store_entries_1[i].countdown;
+          if (count > 0) store_entries_1[i].countdown--;
+          if (count <= 1) store_entries_1[i].idx = -1;
         }
         int next_entry_slot_1 = -1;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          if (store_entries[i].idx == -1)  {
+          if (store_entries_1[i].idx == -1)  {
             next_entry_slot_1 = i;
           }
         }
@@ -271,7 +319,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
           tag1_store_1 = idx_tag_pair_store_1.thrd;
 
           if (idx_store_1 != -1) {
-            store_entries[next_entry_slot_1] = {idx_store_1, tag0_store_1, tag1_store_1, -1};
+            store_entries_1[next_entry_slot_1] = {idx_store_1, tag0_store_1, tag1_store_1, -1};
             store_1_idx_fifo[store_1_idx_fifo_head] = {next_entry_slot_1, idx_store_1};
 
             i_store_1_idx++;
@@ -288,8 +336,8 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         if (val_store_1_pipe_succ) {
           auto entry_slot_and_idx_pair = store_1_idx_fifo[0];           
           PipelinedLSU::store(vertices.get_pointer() + entry_slot_and_idx_pair.snd, val_store_1);
-          store_entries[entry_slot_and_idx_pair.fst].val = val_store_1;
-          store_entries[entry_slot_and_idx_pair.fst].countdown = STORE_LATENCY;
+          store_entries_1[entry_slot_and_idx_pair.fst].val = val_store_1;
+          store_entries_1[entry_slot_and_idx_pair.fst].countdown = STORE_LATENCY;
 
           #pragma unroll
           for (uint i=1; i<STORE_Q_SIZE; ++i) {
@@ -302,10 +350,16 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         /* End Store 1 Logic */
 
         /* Start Store 2 Logic */
+        #pragma unroll
+        for (uint i=0; i<STORE_Q_SIZE; ++i) {
+          const int count = store_entries_2[i].countdown;
+          if (count > 0) store_entries_2[i].countdown--;
+          if (count <= 1) store_entries_2[i].idx = -1;
+        }
         int next_entry_slot_2 = -1;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          if (store_entries[i].idx == -1)  {
+          if (store_entries_2[i].idx == -1)  {
             next_entry_slot_2 = i;
           }
         }
@@ -322,7 +376,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
           tag1_store_2 = idx_tag_pair_store_2.thrd;
 
           if (idx_store_2 != -1) {
-            store_entries[next_entry_slot_2] = {idx_store_2, tag0_store_2, tag1_store_2, -1};
+            store_entries_2[next_entry_slot_2] = {idx_store_2, tag0_store_2, tag1_store_2, -1};
             store_2_idx_fifo[store_2_idx_fifo_head] = {next_entry_slot_2, idx_store_2};
 
             i_store_2_idx++;
@@ -339,8 +393,8 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         if (val_store_2_pipe_succ) {
           auto entry_slot_and_idx_pair = store_2_idx_fifo[0];           
           PipelinedLSU::store(vertices.get_pointer() + entry_slot_and_idx_pair.snd, val_store_2);
-          store_entries[entry_slot_and_idx_pair.fst].val = val_store_2;
-          store_entries[entry_slot_and_idx_pair.fst].countdown = STORE_LATENCY;
+          store_entries_2[entry_slot_and_idx_pair.fst].val = val_store_2;
+          store_entries_2[entry_slot_and_idx_pair.fst].countdown = STORE_LATENCY;
 
           #pragma unroll
           for (uint i=1; i<STORE_Q_SIZE; ++i) {
