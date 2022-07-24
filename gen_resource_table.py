@@ -43,15 +43,19 @@ def get_resources(bin):
 
 def get_power(kernel, approach, q_size_idx):
     filename = f'{EXP_DATA_DIR}/{kernel}/hardware/power.csv'
-    df = pd.read_csv(filename)
-    res = df.loc[q_size_idx][approach]
-    return res
+    try:
+        df = pd.read_csv(filename)
+        res = df.loc[q_size_idx][approach]
+        return res
+    except:
+        return 0
 
-def get_min_max_runtime(kernel, approach, q_size_idx, a_size):
+def get_min_max_runtime(kernel, approach, q_size_idx):
     min = np.inf
     max = 0
     for distr_idx, distr_name in DATA_DISTRIBUTIONS.items():
-        filename = f'{EXP_DATA_DIR}/{kernel}/hardware/{distr_name}_{a_size}.csv'
+        distr_name = f'{distr_name}_5' if distr_idx == 2 else distr_name
+        filename = f'{EXP_DATA_DIR}/{kernel}/hardware/{distr_name}.csv'
         df = pd.read_csv(filename)
         time = df.loc[q_size_idx][approach]
         min = time if time < min else min
@@ -76,7 +80,7 @@ if __name__ == '__main__':
     BIN_EXTENSION = 'fpga'
     SUB_DIR = 'hardware'
 
-    for kernel, a_size in KERNEL_ASIZE_PAIRS.items():
+    for kernel in KERNEL_ASIZE_PAIRS.keys():
         print('Running kernel:', kernel)
 
         BINS_STATIC = [f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}']
@@ -92,7 +96,7 @@ if __name__ == '__main__':
             writer = csv.writer(f)
             writer.writerow(['approach', 'ALUTs', 'REGs', 'RAMs', 'DSPs', 'Fmax (MHz)', 'Watts', 'Exec time min-max (ms)'])
 
-            min_static, max_static = get_min_max_runtime(kernel, 'static', 0, a_size)
+            min_static, max_static = get_min_max_runtime(kernel, 'static', 0)
             min_max_static = f'{min_static} - {max_static} (1x)'
             power_static = get_power(kernel, 'static', 0)
             resources_static = get_resources(BINS_STATIC[0])
@@ -102,7 +106,7 @@ if __name__ == '__main__':
             
             for i, q_size in enumerate(Q_SIZES_DYNAMIC_NO_FORWARD):
                 if i < len(BINS_DYNAMIC):
-                    min_dynamic, max_dynamic = get_min_max_runtime(kernel, 'dynamic', i, a_size)
+                    min_dynamic, max_dynamic = get_min_max_runtime(kernel, 'dynamic', i)
                     relative_speedup_1 = round(min_static/min_dynamic, 2)
                     relative_speedup_2 = round(max_static/max_dynamic, 2)
                     relative_str = f'{min(relative_speedup_1, relative_speedup_2)}-{max(relative_speedup_1, relative_speedup_2)}x'
@@ -116,7 +120,7 @@ if __name__ == '__main__':
                     writer.writerow(new_row)
 
                 if i < len(BINS_DYNAMIC_NO_FORWARD):
-                    min_dynamic_no_frwd, max_dynamic_no_frwd = get_min_max_runtime(kernel, 'dynamic_no_forward', i, a_size)
+                    min_dynamic_no_frwd, max_dynamic_no_frwd = get_min_max_runtime(kernel, 'dynamic_no_forward', i)
                     relative_speedup_1 = round(min_static/min_dynamic_no_frwd, 2)
                     relative_speedup_2 = round(max_static/max_dynamic_no_frwd, 2)
                     relative_str = f'{min(relative_speedup_1, relative_speedup_2)}-{max(relative_speedup_1, relative_speedup_2)}x'
