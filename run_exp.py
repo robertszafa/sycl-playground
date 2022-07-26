@@ -27,8 +27,8 @@ DATA_DISTRIBUTIONS = {
     2: 'percentage_wait'
 }
 
-Q_SIZES_DYNAMIC = [1, 2, 4, 8, 16]
-Q_SIZES_DYNAMIC_NO_FORWARD = [1, 2, 4, 8, 16, 32, 64]
+Q_SIZES_DYNAMIC = [2, 4, 8, 16]
+Q_SIZES_DYNAMIC_NO_FORWARD = [2, 4, 8, 16, 32, 64]
 
 PERCENTAGE_WAIT = 5
 
@@ -37,6 +37,7 @@ TMP_FILE = '.tmp_run_exp.txt'
 
 
 def run_bin(bin, a_size, distr=0, percentage=0):
+    print(f'> {bin} :')
     os.system(f'{bin} {a_size} {distr} {percentage} > {TMP_FILE}')
 
     stdout = ''
@@ -50,6 +51,7 @@ def run_bin(bin, a_size, distr=0, percentage=0):
         with open(SIM_CYCLES_FILE, 'r') as f:
             match = re.search(r'"time":"(\d+)"', f.read())
         if (match):
+            print(f'> {int(match.group(1))}')
             return int(match.group(1))
     else: 
         # Get time
