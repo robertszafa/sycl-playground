@@ -29,7 +29,7 @@ using PipelinedLSU = ext::intel::lsu<>;
 #endif
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 72; // This should be gotten from static analysis.
+constexpr uint STORE_LATENCY = 12; // This should be gotten from static analysis.
 
 struct pair {
   int fst; 
@@ -133,7 +133,9 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
 
       int i_store_val = 0;
       int i_store_idx = 0;
+      // Points to store_q entry where the next store value should be read in.
       int stq_tail = 0;
+      // Points to store_q entry where the next store index should be read in.
       int stq_head = 0;
       // Two tags because there could be two stores in the same iteration.
       // In general (nested loops, multiple stores in same scope, etc.) the tag is an n-tuple.
@@ -146,14 +148,14 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
       int val_load_1;
       int idx_load_1; 
       int tag_load_1 = -1; 
-      bool consumer_load_1_accepted = true;
+      bool consumer_load_1_succ = true;
       bool is_load_1_waiting = false;
       triple idx_tag_pair_load_1;
 
       int val_load_2;
       int idx_load_2;
       int tag_load_2 = -1; 
-      bool consumer_load_2_accepted = true;
+      bool consumer_load_2_succ = true;
       bool is_load_2_waiting = false;
       triple idx_tag_pair_load_2;
 
@@ -168,87 +170,97 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
         if (tag1_store == 1) max_tag_store = tag0_store;
 
         /* Start Load 1 Logic */
-        if ((tag_load_1 <= max_tag_store && consumer_load_1_accepted) || is_load_1_waiting) {
+        if ((tag_load_1 <= max_tag_store && consumer_load_1_succ) || is_load_1_waiting) {
+          // Check for new ld requests.
           bool idx_load_pipe_succ = false;
           if (!is_load_1_waiting) {
             idx_tag_pair_load_1 = u_load_pipe::read(idx_load_pipe_succ);
           }
 
+          // If new ld request, or if we are still waiting for a previous one, then check store_q.
           if (idx_load_pipe_succ || is_load_1_waiting) {
             idx_load_1 = idx_tag_pair_load_1.fst;
             tag_load_1 = idx_tag_pair_load_1.snd;
 
-            bool _is_load_1_waiting = false;
+            is_load_1_waiting = false;
             pair max_tag = {-1, -1}; 
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
               auto st_entry = store_entries[i];
+              // If found, make sure it's the youngest store occuring before this ld. 
               if (st_entry.idx == idx_load_1 && st_entry.tag0 < tag_load_1 && 
                   st_entry.tag0 >= max_tag.fst && st_entry.tag1 > max_tag.snd) {
-                _is_load_1_waiting = st_entry.waiting_for_val;
+                is_load_1_waiting = st_entry.waiting_for_val;
                 val_load_1 = st_entry.val;
                 max_tag = {st_entry.tag0, st_entry.tag1};
               }
             }
 
-            if (!_is_load_1_waiting && max_tag.fst == -1) {
+            if (!is_load_1_waiting && max_tag.fst == -1) {
+              // Not found in store_q, so issue ld.
               val_load_1 = PipelinedLSU::load(vertices.get_pointer() + idx_load_1);
             }
 
-            is_load_1_waiting = _is_load_1_waiting;
-            consumer_load_1_accepted = _is_load_1_waiting;
+            // Setting 'consumer_load_succ' to false forces a write to consumer pipe.
+            consumer_load_1_succ = is_load_1_waiting;
           }
         }
-        if (!consumer_load_1_accepted) {
-          vertex_u_pipe::write(val_load_1, consumer_load_1_accepted);
+        if (!consumer_load_1_succ) {
+          vertex_u_pipe::write(val_load_1, consumer_load_1_succ);
         }
         /* End Load 1 Logic */
 
         /* Start Load 2 Logic */
-        if ((tag_load_2 <= max_tag_store && consumer_load_2_accepted) || is_load_2_waiting) {
+        if ((tag_load_2 <= max_tag_store && consumer_load_2_succ) || is_load_2_waiting) {
+          // Check for new ld requests.
           bool idx_load_pipe_succ = false;
           if (!is_load_2_waiting) {
             idx_tag_pair_load_2 = v_load_pipe::read(idx_load_pipe_succ);
           }
 
+          // If new ld request, or if we are still waiting for a previous one, then check store_q.
           if (idx_load_pipe_succ || is_load_2_waiting) {
             idx_load_2 = idx_tag_pair_load_2.fst;
             tag_load_2 = idx_tag_pair_load_2.snd;
 
-            bool _is_load_2_waiting = false;
+            is_load_2_waiting = false;
             pair max_tag = {-1, -1}; 
             #pragma unroll
             for (uint i=0; i<STORE_Q_SIZE; ++i) {
               auto st_entry = store_entries[i];
+              // If found, make sure it's the youngest store occuring before this ld. 
               if (st_entry.idx == idx_load_2 && st_entry.tag0 < tag_load_2 && 
                   st_entry.tag0 >= max_tag.fst && st_entry.tag1 > max_tag.snd) {
-                _is_load_2_waiting = st_entry.waiting_for_val;
+                is_load_2_waiting = st_entry.waiting_for_val;
                 val_load_2 = st_entry.val;
                 max_tag = {st_entry.tag0, st_entry.tag1};
               }
             }
 
-            if (!_is_load_2_waiting && max_tag.fst == -1) {
+            if (!is_load_2_waiting && max_tag.fst == -1) {
+              // Not found in store_q, so issue ld.
               val_load_2 = PipelinedLSU::load(vertices.get_pointer() + idx_load_2);
             }
 
-            is_load_2_waiting = _is_load_2_waiting;
-            consumer_load_2_accepted = _is_load_2_waiting;
+            // Setting 'consumer_load_succ' to false forces a write to consumer pipe.
+            consumer_load_2_succ = is_load_2_waiting;
           }
         }
-        if (!consumer_load_2_accepted) {
-          vertex_v_pipe::write(val_load_2, consumer_load_2_accepted);
+        if (!consumer_load_2_succ) {
+          vertex_v_pipe::write(val_load_2, consumer_load_2_succ);
         }
         /* End Load 2 Logic */
       
         /* Start Store 1 Logic */
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
+          // Decrement count, and invalidate idexes if count below 0.
           const int count = store_entries[i].countdown;
-          if (count > 0 && !store_entries[i].waiting_for_val) store_entries[i].countdown--;
+          if (count > 0) store_entries[i].countdown--;
           if (count <= 1 && !store_entries[i].waiting_for_val) store_entries[i].idx = -1;
         }
 
+        // If store_q not full, check for new store_idx requests.
         bool is_stq_full = (stq_head + 1) == stq_tail;
         if (!is_stq_full) {
           bool idx_store_pipe_succ = false;
@@ -259,8 +271,9 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
             tag0_store = idx_tag_pair_store.snd;
             tag1_store = idx_tag_pair_store.thrd;
 
+            // Requests with idx_store=-1 are only sent to update the store tag 
+            // (lets loads know that this iteration doesn't store anything (e.g. conditional store)).
             if (idx_store != -1) {
-
               store_entries[stq_head] = {idx_store, tag0_store, tag1_store, true};
 
               i_store_idx++;
@@ -269,11 +282,13 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
           }
         }
         
+        // If we have more store indexes read than store values, then check for new store_vals.
         if (i_store_idx > i_store_val) {
           bool val_store_pipe_succ = false;
           val_store = store_val_pipe::read(val_store_pipe_succ);
 
           if (val_store_pipe_succ) {
+            // Add value to corresponding store entry, store to mem, and start counter.
             PipelinedLSU::store(vertices.get_pointer() + store_entries[stq_tail].idx, val_store);
             store_entries[stq_tail].val = val_store;
             store_entries[stq_tail].countdown = STORE_LATENCY;
