@@ -7,6 +7,9 @@
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
+#include "pipe_utils.hpp"
+
+
 using namespace sycl;
 
 #ifdef __SYCL_DEVICE_ONLY__
