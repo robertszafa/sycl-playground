@@ -14,7 +14,7 @@ using namespace sycl;
 #else
   #define CL_CONSTANT
 #endif
-#define PRINTF(format, ...) { \
+#define PRINTF(format, ...) //{ \
             static const CL_CONSTANT char _format[] = format; \
             sycl::ext::oneapi::experimental::printf(_format, ## __VA_ARGS__); }
 
@@ -29,7 +29,7 @@ using PipelinedLSU = ext::intel::lsu<>;
 #endif
 
 constexpr uint STORE_Q_SIZE = Q_SIZE; // Min q_size=2 because the queue is a circ. buffer. 
-constexpr uint STORE_LATENCY = 16;    // This should be gotten from static analysis (min 7 cycles).
+constexpr uint STORE_LATENCY = 12;    // This should be gotten from static analysis (min 7 cycles).
 
 struct store_entry {
   int idx; // This should be the full address in a real impl.
@@ -119,14 +119,10 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
   q.submit([&](handler &hnd) {
 
     hnd.single_task<class CalcKernel>([=]() [[intel::kernel_args_restrict]] {
-      int atanh[12] = {0x08C9, 0x0416, 0x0202, 0x0100, 0x0080, 0x0064,
+      [[intel::fpga_register]] int atanh[12] = {0x08C9, 0x0416, 0x0202, 0x0100, 0x0080, 0x0064,
                        0x0032, 0x0010, 0x0008, 0x0004, 0x0002, 0x0001};
-      int cosh[5] = {0x1000, 0x18B0, 0x3C31, 0xA115, 0x1B4EE};
-      int sinh[5] = {0x0, 0x12CD, 0x3A07, 0xA049, 0x1B4A3};
-
-      // int x = 0x1351;
-      // int y = 0;
-      // int beta;
+      [[intel::fpga_register]] int cosh[5] = {0x1000, 0x18B0, 0x3C31, 0xA115, 0x1B4EE};
+      [[intel::fpga_register]] int sinh[5] = {0x0, 0x12CD, 0x3A07, 0xA049, 0x1B4A3};
 
       #pragma ivdep
       while(predicate_calc_pipe::read()) {
@@ -213,7 +209,7 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
 
       #pragma unroll
       for (uint i=0; i<STORE_Q_SIZE; ++i) {
-        store_entries[i] = {-1, -2};
+        store_entries[i] = {-1, -2, 0, 0};
       }
 
       int i_store_val = 0;
@@ -222,9 +218,6 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
       int stq_tail = 0;
       // Points to store_q entry where the next store index should be read in.
       int stq_head = 0;
-      uint num_enqued = 0;
-      // Two tags because there could be two stores in the same iteration.
-      // In general (nested loops, multiple stores in same scope, etc.) the tag is an n-tuple.
       int tag_store = -1;
       int idx_store;
       int val_store;
@@ -283,19 +276,24 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
         /* End Load 1 Logic */
       
         /* Start Store 1 Logic */
+        bool is_space_in_stq = false;
         #pragma unroll
         for (uint i=0; i<STORE_Q_SIZE; ++i) {
           // Decrement count, and invalidate idexes if count below 0.
           const int count = store_entries[i].countdown;
+          const int ste_idx = store_entries[i].idx;
+
           if (count > 0) store_entries[i].countdown--;
-          // if (count == 1) num_enqued--;
-          if (count <= 1 && !store_entries[i].waiting_for_val) store_entries[i].idx = -1;
+          if (ste_idx == -1) is_space_in_stq |= true;
+
+          if (count == 1 && !store_entries[i].waiting_for_val) {
+            store_entries[i].idx = -1;
+            is_space_in_stq |= true;
+          }
         }
 
         // If store_q not full, check for new store_idx requests.
-        bool is_stq_full = ((num_enqued % STORE_Q_SIZE) == 0 && num_enqued != 0) && (stq_head == stq_tail);
-        PRINTF("is_stq_full %d\n", is_stq_full);
-        if (!is_stq_full) {
+        if (is_space_in_stq) {
           bool idx_store_pipe_succ = false;
           idx_tag_pair_store = idx_st_pipe::read(idx_store_pipe_succ);
 
@@ -306,15 +304,10 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
             // Requests with idx_store=-1 are only sent to update the store tag 
             // (lets loads know that this iteration doesn't store anything (e.g. conditional store)).
             if (idx_store != -1) {
-              PRINTF("\ni_store_idx %d\n", i_store_idx);
-              PRINTF("stq_head   %d --> ", stq_head);
-
               store_entries[stq_head] = {idx_store, tag_store, true};
 
               i_store_idx++;
-              num_enqued++;
               stq_head = (stq_head+1) % STORE_Q_SIZE;
-              PRINTF("%d\n\n", stq_head);
             }
             
           }
@@ -327,18 +320,15 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
 
           if (val_store_pipe_succ) {
             // Add value to corresponding store entry, store to mem, and start counter.
-            PRINTF("\n i_store_val %d\n", i_store_val);
-            PRINTF("stq_tail   %d --> ", stq_tail);
-
-            PRINTF("Storing to %d\n", store_entries[stq_tail].idx);
-            PipelinedLSU::store(A.get_pointer() + store_entries[stq_tail].idx, val_store);
-            store_entries[stq_tail].val = val_store;
-            store_entries[stq_tail].countdown = STORE_LATENCY;
-            store_entries[stq_tail].waiting_for_val = false;
+            const auto stq_idx = stq_tail;
+            PRINTF("Storing to %d\n", store_entries[stq_idx].idx);
+            PipelinedLSU::store(A.get_pointer() + store_entries[stq_idx].idx, val_store);
+            store_entries[stq_idx].val = val_store;
+            store_entries[stq_idx].countdown = STORE_LATENCY;
+            store_entries[stq_idx].waiting_for_val = false;
 
             i_store_val++;
             stq_tail = (stq_tail+1) % STORE_Q_SIZE;
-            PRINTF("%d\n\n", stq_tail);
           }
         }
         /* End Store 1 Logic */

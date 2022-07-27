@@ -28,9 +28,10 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
     accessor addr_in(addr_in_buf, hnd, read_only);
 
     hnd.single_task<get_tanhKernel>([=]() [[intel::kernel_args_restrict]] {
-      int atanh[12] = { 0x08C9, 0x0416, 0x0202, 0x0100, 0x0080, 0x0064, 0x0032, 0x0010, 0x0008, 0x0004, 0x0002, 0x0001 };
-      int cosh[5] = { 0x1000, 0x18B0, 0x3C31, 0xA115, 0x1B4EE};
-      int sinh[5] = { 0x0, 0x12CD, 0x3A07, 0xA049, 0x1B4A3};
+      [[intel::fpga_register]] int atanh[12] = {0x08C9, 0x0416, 0x0202, 0x0100, 0x0080, 0x0064,
+                                                0x0032, 0x0010, 0x0008, 0x0004, 0x0002, 0x0001};
+      [[intel::fpga_register]] int cosh[5] = {0x1000, 0x18B0, 0x3C31, 0xA115, 0x1B4EE};
+      [[intel::fpga_register]] int sinh[5] = {0x0, 0x12CD, 0x3A07, 0xA049, 0x1B4A3};
 
 
       for (int i = 0; i < array_size; i++) {
