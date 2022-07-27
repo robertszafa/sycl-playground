@@ -128,10 +128,9 @@ def make_plot_all_percentages(filename, relative=False, y_label='Speedup (normal
     y3 = df[f'dynamic_no_forward (q_size {Q_SIZE_DYNAMIC_NO_FORWARD})'].replace({0: np.nan})
 
     if relative:
-        static_baseline = y[0]
+        y2 = [y[k]/val for k, val in enumerate(y2)]
+        y3 = [y[k]/val for k, val in enumerate(y3)]
         y = [1 for _ in df['static']]
-        y2 = [static_baseline/val for val in y2]
-        y3 = [static_baseline/val for val in y3]
 
     # plot
     fig = plt.figure(fig_id, figsize=(8, 8))
@@ -208,7 +207,7 @@ if __name__ == '__main__':
             make_plot(csv_fname, title=f'Data distribution {distr_name} {percentage_suffix_title}')
 
 
-        ### Plot speedup vs. % data hazards
+        ## Plot speedup vs. % data hazards
         csv_file_all_percentages = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}'
         if Path(csv_file_all_percentages).is_file():
             make_plot_all_percentages(csv_file_all_percentages, y_label=Y_LABEL,
