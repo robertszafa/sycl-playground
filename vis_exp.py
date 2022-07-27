@@ -67,8 +67,8 @@ def make_plot(filename, relative=True, y_label='Speedup (normalised)', title='')
     if relative:
         static_baseline = y[0]
         y = [1 for _ in df['static']]
-        y2 = [val/static_baseline for val in y2]
-        y3 = [val/static_baseline for val in y3]
+        y2 = [static_baseline/val for val in y2]
+        y3 = [static_baseline/val for val in y3]
 
     # plot
     fig = plt.figure(fig_id, figsize=(8, 8))
