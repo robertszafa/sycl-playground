@@ -12,19 +12,21 @@ KERNEL_ASIZE_PAIRS = {
     'histogram_if' : 1000000,
     'spmv' : 400,
     'maximal_matching' : 1000000,
+    'get_tanh' : 1000000,
 }
 # Decrease domain sizes when running in simulation.
 KERNEL_ASIZE_PAIRS_SIM = {
     'histogram' : 1000,
     'histogram_if' : 1000,
     'spmv' : 20,
-    'maximal_matching' : 1000,
+    # 'maximal_matching' : 1000,
+    # 'get_tanh' : 1000,
 }
 
 DATA_DISTRIBUTIONS = {
     0: 'all_wait',
     1: 'no_wait',
-    2: 'percentage_wait'
+    # 2: 'percentage_wait' # run_exp_all_percentages runs for different % of data hazards.
 }
 
 Q_SIZES_DYNAMIC = [2, 4, 8, 16]
@@ -37,7 +39,7 @@ TMP_FILE = '.tmp_run_exp.txt'
 
 
 def run_bin(bin, a_size, distr=0, percentage=0):
-    print(f'> {bin} :')
+    print(f'> {bin} : ', end='')
     os.system(f'{bin} {a_size} {distr} {percentage} > {TMP_FILE}')
 
     stdout = ''
@@ -51,7 +53,7 @@ def run_bin(bin, a_size, distr=0, percentage=0):
         with open(SIM_CYCLES_FILE, 'r') as f:
             match = re.search(r'"time":"(\d+)"', f.read())
         if (match):
-            print(f'> {int(match.group(1))}')
+            print(f'{int(match.group(1))}')
             return int(match.group(1))
     else: 
         # Get time

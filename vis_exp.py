@@ -8,8 +8,8 @@ from pathlib import Path
 # Keep parameters synced
 from run_exp import (EXP_DATA_DIR, Q_SIZES_DYNAMIC, Q_SIZES_DYNAMIC_NO_FORWARD, DATA_DISTRIBUTIONS,
                      KERNEL_ASIZE_PAIRS, KERNEL_ASIZE_PAIRS_SIM, PERCENTAGE_WAIT)
-from run_exp_all_percentages import (CSV_PERCENTAGES_RES_FILE, PERCENTAGES_WAIT, Q_SIZE_DYNAMIC, 
-                                     Q_SIZE_DYNAMIC_NO_FORWARD)
+from run_exp_all_percentages import (CSV_PERCENTAGES_RES_FILE, PERCENTAGES_WAIT, BEST_Q_SIZES_DYNAMIC, 
+                                     BEST_Q_SIZES_DYNAMIC_NO_FORWARD)
 
 plt.rcParams['font.size'] = 14
 # colors = seaborn.color_palette("rocket", 3)
@@ -110,7 +110,7 @@ def make_plot(filename, relative=True, y_label='Speedup (normalised)', title='')
     plt.savefig(filename.replace('csv', 'png'), dpi=300, bbox_inches="tight")
 
 
-def make_plot_all_percentages(filename, relative=False, y_label='Speedup (normalised)', title=''):
+def make_plot_all_percentages(filename, kernel, relative=False, y_label='Speedup (normalised)', title=''):
     global fig_id
     global BINS_STATIC
     global BINS_DYNAMIC
@@ -123,9 +123,9 @@ def make_plot_all_percentages(filename, relative=False, y_label='Speedup (normal
     y = df['static'].replace({0: np.nan})
 
     x2 = df['percentage']
-    y2 = df[f'dynamic (q_size {Q_SIZE_DYNAMIC})'].replace({0: np.nan})
+    y2 = df[f'dynamic (q_size {BEST_Q_SIZES_DYNAMIC[kernel]})'].replace({0: np.nan})
     x3 = df['percentage']
-    y3 = df[f'dynamic_no_forward (q_size {Q_SIZE_DYNAMIC_NO_FORWARD})'].replace({0: np.nan})
+    y3 = df[f'dynamic_no_forward (q_size {BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]})'].replace({0: np.nan})
 
     if relative:
         y2 = [y[k]/val for k, val in enumerate(y2)]
@@ -135,10 +135,10 @@ def make_plot_all_percentages(filename, relative=False, y_label='Speedup (normal
     # plot
     fig = plt.figure(fig_id, figsize=(8, 8))
     plt.plot(x3, y3, linestyle='-', marker='^', 
-                 label=f'dynamic (no forwarding, q_size {Q_SIZE_DYNAMIC_NO_FORWARD})',
+                 label=f'dynamic (no forwarding, q_size {BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]})',
                  color=colors[2], mfc='w', markersize=8)
     plt.plot(x2, y2, linestyle='-', marker='s', 
-                 label=f'dynamic (forwarding, q_size {Q_SIZE_DYNAMIC})',
+                 label=f'dynamic (forwarding, q_size {BEST_Q_SIZES_DYNAMIC[kernel]})',
                  color=colors[1], mfc='w', markersize=8)
     plt.plot(x, y, linestyle='-', marker='o', label='static',
                  color=colors[0], mfc='w', markersize=8)
@@ -150,13 +150,13 @@ def make_plot_all_percentages(filename, relative=False, y_label='Speedup (normal
         plt.text(x[len(x) - 1], y[len(y) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic')
 
         for i in range(len(BINS_DYNAMIC)):
-            if Q_SIZES_DYNAMIC[i] == Q_SIZE_DYNAMIC:
+            if Q_SIZES_DYNAMIC[i] == BEST_Q_SIZES_DYNAMIC[kernel]:
                 freq = get_freq(BINS_DYNAMIC[i])
                 ii = get_ii(BINS_DYNAMIC[i])
                 plt.text(x2[len(x2) - 1], y2[len(y2) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic')
 
         for i in range(len(BINS_DYNAMIC_NO_FORWARD)):
-            if Q_SIZES_DYNAMIC_NO_FORWARD[i] == Q_SIZE_DYNAMIC_NO_FORWARD:
+            if Q_SIZES_DYNAMIC_NO_FORWARD[i] == BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]:
                 freq = get_freq(BINS_DYNAMIC_NO_FORWARD[i])
                 ii = get_ii(BINS_DYNAMIC_NO_FORWARD[i])
                 plt.text(x3[len(x3) - 1], y3[len(y3) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic') 
@@ -210,10 +210,10 @@ if __name__ == '__main__':
         ## Plot speedup vs. % data hazards
         csv_file_all_percentages = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}'
         if Path(csv_file_all_percentages).is_file():
-            make_plot_all_percentages(csv_file_all_percentages, y_label=Y_LABEL,
+            make_plot_all_percentages(csv_file_all_percentages, kernel, y_label=Y_LABEL,
                                     title='Performance at various levels of data hazards')
 
-            make_plot_all_percentages(csv_file_all_percentages, relative=True,
+            make_plot_all_percentages(csv_file_all_percentages, kernel, relative=True,
                                     title='Speedup of Store Queue at various levels of data hazards')
 
 

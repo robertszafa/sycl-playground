@@ -7,15 +7,32 @@ from run_exp import (EXP_DATA_DIR, KERNEL_ASIZE_PAIRS, KERNEL_ASIZE_PAIRS_SIM,
                      SIM_CYCLES_FILE, TMP_FILE)
 
 
-Q_SIZE_DYNAMIC = 16
-Q_SIZE_DYNAMIC_NO_FORWARD = 32
+# Only run with the best Q_SIZE, otherwise there will be a lot of runs.
+BEST_Q_SIZES_DYNAMIC = {
+    'histogram' : 16,
+    'histogram_if' : 16,
+    'spmv' : 16,
+    'maximal_matching' : 4,
+    'get_tanh' : 8,
+}
+BEST_Q_SIZES_DYNAMIC_NO_FORWARD  = {
+    'histogram' : 32,   # 64 is actually better
+    'histogram_if' : 32,
+    'spmv' : 32,
+    'maximal_matching' : 4,
+    'get_tanh' : 16,
+}
+
+DATA_DISTRIBUTION_KEY = 2
+DATA_DISTRIBUTION_NAME = 'percentage_wait'
 
 PERCENTAGES_WAIT = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
 
-CSV_PERCENTAGES_RES_FILE = 'percentage_wait_all.csv'
+CSV_PERCENTAGES_RES_FILE = f'{DATA_DISTRIBUTION_NAME}.csv'
 
 
 def run_bin(bin, a_size, distr=2, percentage=0):
+    print(f'> {bin} : ', end='')
     os.system(f'{bin} {a_size} {distr} {percentage} > {TMP_FILE}')
 
     stdout = ''
@@ -29,6 +46,7 @@ def run_bin(bin, a_size, distr=2, percentage=0):
         with open(SIM_CYCLES_FILE, 'r') as f:
             match = re.search(r'"time":"(\d+)"', f.read())
         if (match):
+            print(f'{int(match.group(1))}')
             return int(match.group(1))
     else: 
         # Get time
@@ -57,8 +75,8 @@ if __name__ == '__main__':
         with open(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}', 'w') as f:
             writer = csv.writer(f)
             writer.writerow(['percentage', 'static', 
-                                f'dynamic (q_size {Q_SIZE_DYNAMIC})', 
-                                f'dynamic_no_forward (q_size {Q_SIZE_DYNAMIC_NO_FORWARD})'])
+                                f'dynamic (q_size {BEST_Q_SIZES_DYNAMIC[kernel]})', 
+                                f'dynamic_no_forward (q_size {BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]})'])
 
             for percentage in PERCENTAGES_WAIT:
                 print(f'Running with percentage_wait {percentage} %')
