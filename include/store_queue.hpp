@@ -1,3 +1,5 @@
+/// Generic Store Queue 
+
 #include "CL/sycl/access/access.hpp"
 #include "CL/sycl/builtins.hpp"
 #include "CL/sycl/properties/accessor_properties.hpp"
@@ -7,7 +9,7 @@
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-#include "pipe_utils.hpp"
+// #include "pipe_utils.hpp"
 
 
 using namespace sycl;
@@ -77,7 +79,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
       bool end_signal = false;
 
       [[intel::ivdep]] 
-      while (!end_signal) {
+      while (!end_signal || (i_store_idx > i_store_val)) {
         /* Start Load 1 Logic */
         if ((tag_load <= tag_store && consumer_load_succ) || is_load_waiting) {
           // Check for new ld requests.
@@ -232,7 +234,7 @@ void StoreQueueNoForward(queue &q, buffer<T_val> &data_buf) {
       bool end_signal = false;
 
       [[intel::ivdep]] 
-      while (!end_signal) {
+      while (!end_signal || (i_store_idx > i_store_val)) {
         /* Start Load 1 Logic */
         if ((tag_load <= tag_store && consumer_load_succ) || is_load_waiting) {
           // Check for new ld requests.

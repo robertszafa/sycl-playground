@@ -27,7 +27,7 @@ void init_data(std::vector<int> &A, std::vector<int> &addr_in, std::vector<int> 
   auto dice = std::bind(distribution, generator);
 
   for (int i = 0; i < A.size(); i++) {
-    A[i] = 30000; // i % K == 0? rand()%1000 : 30000;
+    A[i] = (i % 2 == 0) ? rand()%1000 : 30000;
 
     if (distr == data_distribution::ALL_WAIT) {
       addr_in[i] = std::max(i - 1, 0);
