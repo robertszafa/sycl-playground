@@ -19,8 +19,8 @@ KERNEL_ASIZE_PAIRS_SIM = {
     'histogram' : 1000,
     'histogram_if' : 1000,
     'spmv' : 20,
-    # 'maximal_matching' : 1000,
-    # 'get_tanh' : 1000,
+    'maximal_matching' : 1000,
+    'get_tanh' : 1000,
 }
 
 DATA_DISTRIBUTIONS = {
@@ -59,6 +59,7 @@ def run_bin(bin, a_size, distr=0, percentage=0):
         # Get time
         match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
         if (match):
+            print(f'{float(match.group(1))}')
             return float(match.group(1))
 
 
