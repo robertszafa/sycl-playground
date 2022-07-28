@@ -13,7 +13,7 @@ BEST_Q_SIZES_DYNAMIC = {
     'histogram_if' : 16,
     'spmv' : 16,
     'maximal_matching' : 4,
-    'get_tanh' : 8,
+    'get_tanh' : 16,
 }
 BEST_Q_SIZES_DYNAMIC_NO_FORWARD  = {
     'histogram' : 32,   # 64 is actually better
@@ -52,6 +52,7 @@ def run_bin(bin, a_size, distr=2, percentage=0):
         # Get time
         match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
         if (match):
+            print(f'{float(match.group(1))}')
             return float(match.group(1))
 
 
@@ -66,8 +67,8 @@ if __name__ == '__main__':
         print('Running kernel:', kernel)
 
         BIN_STATIC = f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}'
-        BIN_DYNAMIC = f'{kernel}/bin/{kernel}_dynamic_{Q_SIZE_DYNAMIC}qsize.{BIN_EXTENSION}' 
-        BIN_DYNAMIC_NO_FORWARD = f'{kernel}/bin/{kernel}_dynamic_no_forward_{Q_SIZE_DYNAMIC_NO_FORWARD}qsize.{BIN_EXTENSION}' 
+        BIN_DYNAMIC = f'{kernel}/bin/{kernel}_dynamic_{BEST_Q_SIZES_DYNAMIC[kernel]}qsize.{BIN_EXTENSION}' 
+        BIN_DYNAMIC_NO_FORWARD = f'{kernel}/bin/{kernel}_dynamic_no_forward_{BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]}qsize.{BIN_EXTENSION}' 
 
         # Ensure dir structure exists
         Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}').mkdir(parents=True, exist_ok=True)
