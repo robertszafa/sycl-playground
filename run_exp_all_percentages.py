@@ -13,14 +13,14 @@ BEST_Q_SIZES_DYNAMIC = {
     'histogram_if' : 16,
     'spmv' : 16,
     'maximal_matching' : 4,
-    'get_tanh' : 16,
+    'get_tanh' : 2,
 }
 BEST_Q_SIZES_DYNAMIC_NO_FORWARD  = {
     'histogram' : 32,   # 64 is actually better
     'histogram_if' : 32,
     'spmv' : 32,
     'maximal_matching' : 4,
-    'get_tanh' : 16,
+    'get_tanh' : 4,
 }
 
 DATA_DISTRIBUTION_KEY = 2

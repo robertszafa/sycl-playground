@@ -29,8 +29,8 @@ DATA_DISTRIBUTIONS = {
     # 2: 'percentage_wait' # run_exp_all_percentages runs for different % of data hazards.
 }
 
-Q_SIZES_DYNAMIC = [2, 4, 8, 16]
-Q_SIZES_DYNAMIC_NO_FORWARD = [2, 4, 8, 16, 32, 64]
+Q_SIZES_DYNAMIC = [1, 2, 4, 8, 16, 32, 64]
+Q_SIZES_DYNAMIC_NO_FORWARD = [1, 2, 4, 8, 16, 32, 64]
 
 PERCENTAGE_WAIT = 5
 
