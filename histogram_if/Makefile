@@ -1,23 +1,29 @@
+BENCHMARK := histogram_if
+
 ifndef KERNEL
 KERNEL := dynamic
 endif
+KERNEL_SRC := src/kernel_$(KERNEL).hpp
+ifeq ($(KERNEL), dynamic_no_forward)
+	KERNEL_SRC := src/kernel_dynamic.hpp
+endif
 
 ifndef Q_SIZE
-Q_SIZE := 1
+Q_SIZE := 2
 endif
 
 # Store Queue
 INC := /home/rob/git/sycl-playground/include
 
 SRC := src/main.cpp
-HDR := src/kernel_$(KERNEL).hpp $(INC)/store_queue.hpp
-BIN := bin/histogram_if_$(KERNEL)
+HDR := $(KERNEL_SRC) $(INC)/store_queue.hpp
+BIN := bin/$(BENCHMARK)_$(KERNEL)
 
 ifeq ($(KERNEL), dynamic)
-	BIN := bin/histogram_if_$(KERNEL)_$(Q_SIZE)qsize
+	BIN := bin/$(BENCHMARK)_$(KERNEL)_$(Q_SIZE)qsize
 endif
 ifeq ($(KERNEL), dynamic_no_forward)
-	BIN := bin/histogram_if_$(KERNEL)_$(Q_SIZE)qsize
+	BIN := bin/$(BENCHMARK)_$(KERNEL)_$(Q_SIZE)qsize
 endif
 
 
@@ -28,12 +34,11 @@ CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE) -I$(INC)
 # CXXFLAGS += -Xsghdl
 
 HARDWARE_FLAGS := -Xshardware -DFPGA=1 
-# HARDWARE_FLAGS += -reuse-exe=bin/histogram_if_$(KERNEL)_1200000asize.fpga
+# HARDWARE_FLAGS += -reuse-exe=$(BIN).fpga
 # -Xssfc-exit-fifo-type=zero-latency
 
 SIMULATION_FLAGS := -Xssimulation -DFPGA=1 
 # SIMULATION_FLAGS += -reuse-exe=$(BIN).fpga_sim
-# -Xssfc-exit-fifo-type=zero-latency
 
 
 .PHONY: host fpga_emu fpga 

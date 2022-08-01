@@ -9,10 +9,8 @@
 
 #if static_sched
   #include "kernel_static.hpp"
-#elif dynamic_sched  
-  #include "kernel_dynamic.hpp"
 #else
-  #include "kernel_dynamic_no_forward.hpp"
+  #include "kernel_dynamic.hpp"
 #endif
 
 using namespace sycl;

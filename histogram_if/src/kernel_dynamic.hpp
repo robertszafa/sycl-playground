@@ -36,7 +36,14 @@ struct pair {
 
 double histogram_if_kernel(queue &q, const std::vector<uint> &feature, 
                            const std::vector<uint> &weight, std::vector<uint> &hist) {
+
+#if dynamic_no_forward
+  constexpr bool IS_FORWARDING_Q = false;
+  std::cout << "Dynamic (no forward) HLS\n";
+#else
+  constexpr bool IS_FORWARDING_Q = true;
   std::cout << "Dynamic HLS\n";
+#endif
 
   const uint array_size = feature.size();
 
@@ -94,9 +101,10 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
       }
     });
   });
- 
-  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, 
-             idx_st_pipe, val_st_pipe, end_storeq_signal_pipe, Q_SIZE, 12> (q, hist_buf);
+
+
+  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, idx_st_pipe, val_st_pipe, 
+             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, hist_buf);
 
 
   auto event = q.submit([&](handler &hnd) {

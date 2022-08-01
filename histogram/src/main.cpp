@@ -10,10 +10,8 @@
 
 #if static_sched
   #include "kernel_static.hpp"
-#elif dynamic_sched
-  #include "kernel_dynamic.hpp"
 #else
-  #include "kernel_dynamic_no_forward.hpp"
+  #include "kernel_dynamic.hpp"
 #endif
 
 #include "tables.hpp"
@@ -126,11 +124,7 @@ int main(int argc, char *argv[]) {
     auto start = std::chrono::steady_clock::now();
     double kernel_time = 0;
 
-    #if (NO_FORWARD == 1)
-      kernel_time = histogram_kernel_no_forward(q, feature, weight, hist);
-    #else
-      kernel_time = histogram_kernel(q, feature, weight, hist);
-    #endif
+    kernel_time = histogram_kernel(q, feature, weight, hist);
 
     // Wait for all work to finish.
     q.wait();

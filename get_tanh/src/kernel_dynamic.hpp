@@ -28,7 +28,13 @@ struct pair {
 
 double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> addr_in, 
                        const std::vector<int> addr_out) {
+#if dynamic_no_forward
+  constexpr bool IS_FORWARDING_Q = false;
+  std::cout << "Dynamic (no forward) HLS\n";
+#else
+  constexpr bool IS_FORWARDING_Q = true;
   std::cout << "Dynamic HLS\n";
+#endif
 
   const uint array_size = A.size();
 
@@ -42,8 +48,9 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
   using predicate_calc_pipe = pipe<class predicate_calc_pipe_class, bool, 64>;
   using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, bool>;
 
-  using idx_ld_pipes = PipeArray<class idx_ld_pipe_class, pair, 64, 1>;
-  using val_ld_pipes = PipeArray<class val_ld_pipe_class, int, 64, 1>;
+  constexpr int kNumLdPipes = 1;
+  using idx_ld_pipes = PipeArray<class idx_ld_pipe_class, pair, 64, kNumLdPipes>;
+  using val_ld_pipes = PipeArray<class val_ld_pipe_class, int, 64, kNumLdPipes>;
   using idx_st_pipe = pipe<class idx_st_pipe_class, pair, 64>;
   using val_st_pipe = pipe<class val_st_pipe_class, int, 64>;
 
@@ -70,9 +77,8 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
   });
 
 
-  constexpr int kNumLdPipes = 1;
-  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, 
-             idx_st_pipe, val_st_pipe, end_storeq_signal_pipe, int, Q_SIZE, 12> (q, A_buf);
+  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, idx_st_pipe, val_st_pipe, 
+             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, A_buf);
 
 
   auto event = q.submit([&](handler &hnd) {
