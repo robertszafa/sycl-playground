@@ -9,10 +9,13 @@
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-// #include "pipe_utils.hpp"
+#include "pipe_utils.hpp"
+#include "tuple.hpp"
+#include "unrolled_loop.hpp"
 
 
 using namespace sycl;
+using namespace fpga_tools;
 
 #ifdef __SYCL_DEVICE_ONLY__
   #define CL_CONSTANT __attribute__((opencl_constant))
@@ -33,7 +36,7 @@ using PipelinedLSU = ext::intel::lsu<>;
 class StoreQueueKernel;
 class StoreQueueNoForwardKernel;
 
-template <typename ld_idx_pipe, typename ld_val_pipe, typename T_idx_tag_pair,
+template <typename ld_idx_pipes, typename ld_val_pipes, int num_lds, typename T_idx_tag_pair,
           typename st_idx_pipe, typename st_val_pipe, 
           typename end_signal_pipe, typename T_val, uint QUEUE_SIZE=8, uint ST_LATENCY=12>
 void StoreQueue(queue &q, buffer<T_val> &data_buf) {
@@ -69,56 +72,73 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
       int val_store;
       T_idx_tag_pair idx_tag_pair_store;
 
-      int val_load;
-      int idx_load; 
-      int tag_load = -1; 
-      bool consumer_load_succ = true;
-      bool is_load_waiting = false;
-      T_idx_tag_pair idx_tag_pair_load;
+      NTuple<T_val, num_lds> val_load_tp;
+      NTuple<int, num_lds> idx_load_tp;
+      NTuple<int, num_lds> tag_load_tp;
+      NTuple<bool, num_lds> consumer_load_succ_tp;
+      NTuple<bool, num_lds> is_load_waiting_tp;
+      NTuple<T_idx_tag_pair, num_lds> idx_tag_pair_load_tp;
+
+      UnrolledLoop<num_lds>([&](auto k) {
+        consumer_load_succ_tp. template get<k>() = true;
+        tag_load_tp. template get<k>() = -1;
+        is_load_waiting_tp. template get<k>() = false;
+      });
 
       bool end_signal = false;
 
       [[intel::ivdep]] 
       while (!end_signal || (i_store_idx > i_store_val)) {
-        /* Start Load 1 Logic */
-        if ((tag_load <= tag_store && consumer_load_succ) || is_load_waiting) {
-          // Check for new ld requests.
-          bool idx_load_pipe_succ = false;
-          if (!is_load_waiting) {
-            idx_tag_pair_load = ld_idx_pipe::read(idx_load_pipe_succ);
-          }
+        /* Start Load  Logic */
+        // All loads can proceed in parallel. The below unrolls the template pipe array. 
+        UnrolledLoop<num_lds>([&](auto k) {
+          // Use shorter names.
+          auto& val_load = val_load_tp. template get<k>();
+          auto& idx_load = idx_load_tp. template get<k>();
+          auto& tag_load = tag_load_tp. template get<k>();
+          auto& consumer_load_succ = consumer_load_succ_tp. template get<k>();
+          auto& is_load_waiting = is_load_waiting_tp. template get<k>();
+          auto& idx_tag_pair_load = idx_tag_pair_load_tp. template get<k>();
 
-          // If new ld request, or if we are still waiting for a previous one, then check store_q.
-          if (idx_load_pipe_succ || is_load_waiting) {
-            idx_load = idx_tag_pair_load.first;
-            tag_load = idx_tag_pair_load.second;
+          if ((tag_load <= tag_store && consumer_load_succ) || is_load_waiting) {
+            // Check for new ld requests.
+            bool idx_load_pipe_succ = false;
+            if (!is_load_waiting) {
+              idx_tag_pair_load = ld_idx_pipes:: template PipeAt<k>::read(idx_load_pipe_succ);
+            }
 
-            is_load_waiting = false;
-            int max_tag = -1; 
-            #pragma unroll
-            for (uint i=0; i<QUEUE_SIZE; ++i) {
-              auto st_entry = store_entries[i];
-              // If found, make sure it's the youngest store occuring before this ld. 
-              if (st_entry.idx == idx_load && st_entry.tag < tag_load && st_entry.tag > max_tag) {
-                is_load_waiting = st_entry.waiting_for_val;
-                val_load = st_entry.val;
-                max_tag = st_entry.tag;
+            // If new ld request, or if we are still waiting for a previous one, then check store_q.
+            if (idx_load_pipe_succ || is_load_waiting) {
+              idx_load = idx_tag_pair_load.first;
+              tag_load = idx_tag_pair_load.second;
+
+              is_load_waiting = false;
+              int max_tag = -1; 
+              #pragma unroll
+              for (uint i=0; i<QUEUE_SIZE; ++i) {
+                auto st_entry = store_entries[i];
+                // If found, make sure it's the youngest store occuring before this ld. 
+                if (st_entry.idx == idx_load && st_entry.tag < tag_load && st_entry.tag > max_tag) {
+                  is_load_waiting = st_entry.waiting_for_val;
+                  val_load = st_entry.val;
+                  max_tag = st_entry.tag;
+                }
               }
-            }
 
-            if (!is_load_waiting && max_tag == -1) {
-              // Not found in store_q, so issue ld.
-              val_load = PipelinedLSU::load(data.get_pointer() + idx_load);
-            }
+              if (!is_load_waiting && max_tag == -1) {
+                // Not found in store_q, so issue ld.
+                val_load = PipelinedLSU::load(data.get_pointer() + idx_load);
+              }
 
-            // Setting 'consumer_load_succ' to false forces a write to consumer pipe.
-            consumer_load_succ = is_load_waiting;
+              // Setting 'consumer_load_succ' to false forces a write to consumer pipe.
+              consumer_load_succ = is_load_waiting;
+            }
           }
-        }
-        if (!consumer_load_succ) {
-          ld_val_pipe::write(val_load, consumer_load_succ);
-        }
-        /* End Load 1 Logic */
+          if (!consumer_load_succ) {
+            ld_val_pipes:: template PipeAt<k>::write(val_load, consumer_load_succ);
+          }
+        });
+        /* End Load Logic */
       
         /* Start Store 1 Logic */
         bool is_space_in_stq = false;
@@ -188,7 +208,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
 }
 
 
-template <typename ld_idx_pipe, typename ld_val_pipe, typename T_idx_tag_pair,
+template <typename ld_idx_pipes, typename ld_val_pipes, int num_lds, typename T_idx_tag_pair,
           typename st_idx_pipe, typename st_val_pipe, 
           typename end_signal_pipe, typename T_val, uint QUEUE_SIZE=8, uint ST_LATENCY=12>
 void StoreQueueNoForward(queue &q, buffer<T_val> &data_buf) {
@@ -224,52 +244,69 @@ void StoreQueueNoForward(queue &q, buffer<T_val> &data_buf) {
       int val_store;
       T_idx_tag_pair idx_tag_pair_store;
 
-      int val_load;
-      int idx_load; 
-      int tag_load = -1; 
-      bool consumer_load_succ = true;
-      bool is_load_waiting = false;
-      T_idx_tag_pair idx_tag_pair_load;
+      NTuple<T_val, num_lds> val_load_tp;
+      NTuple<int, num_lds> idx_load_tp;
+      NTuple<int, num_lds> tag_load_tp;
+      NTuple<bool, num_lds> consumer_load_succ_tp;
+      NTuple<bool, num_lds> is_load_waiting_tp;
+      NTuple<T_idx_tag_pair, num_lds> idx_tag_pair_load_tp;
+
+      UnrolledLoop<num_lds>([&](auto k) {
+        consumer_load_succ_tp. template get<k>() = true;
+        tag_load_tp. template get<k>() = -1;
+        is_load_waiting_tp. template get<k>() = false;
+      });
 
       bool end_signal = false;
 
       [[intel::ivdep]] 
       while (!end_signal || (i_store_idx > i_store_val)) {
-        /* Start Load 1 Logic */
-        if ((tag_load <= tag_store && consumer_load_succ) || is_load_waiting) {
-          // Check for new ld requests.
-          bool idx_load_pipe_succ = false;
-          if (!is_load_waiting) {
-            idx_tag_pair_load = ld_idx_pipe::read(idx_load_pipe_succ);
-          }
+        /* Start Load  Logic */
+        // All loads can proceed in parallel. The below unrolls the template pipe array. 
+        UnrolledLoop<num_lds>([&](auto k) {
+          // Use shorter names.
+          auto& val_load = val_load_tp. template get<k>();
+          auto& idx_load = idx_load_tp. template get<k>();
+          auto& tag_load = tag_load_tp. template get<k>();
+          auto& consumer_load_succ = consumer_load_succ_tp. template get<k>();
+          auto& is_load_waiting = is_load_waiting_tp. template get<k>();
+          auto& idx_tag_pair_load = idx_tag_pair_load_tp. template get<k>();
 
-          // If new ld request, or if we are still waiting for a previous one, then check store_q.
-          if (idx_load_pipe_succ || is_load_waiting) {
-            idx_load = idx_tag_pair_load.first;
-            tag_load = idx_tag_pair_load.second;
-
-            is_load_waiting = false;
-            #pragma unroll
-            for (uint i=0; i<QUEUE_SIZE; ++i) {
-              auto st_entry = store_entries[i];
-              if (st_entry.idx == idx_load && st_entry.tag < tag_load) {
-                is_load_waiting = true;
-              }
-            }
-
+          if ((tag_load <= tag_store && consumer_load_succ) || is_load_waiting) {
+            // Check for new ld requests.
+            bool idx_load_pipe_succ = false;
             if (!is_load_waiting) {
-              // Not in store_q, we can safely issue ld.
-              val_load = PipelinedLSU::load(data.get_pointer() + idx_load);
+              idx_tag_pair_load = ld_idx_pipes::template PipeAt<k>::read(idx_load_pipe_succ);
             }
 
-            // Setting 'consumer_load_succ' to false forces a write to consumer pipe.
-            consumer_load_succ = is_load_waiting;
+            // If new ld request, or if we are still waiting for a previous one, then check store_q.
+            if (idx_load_pipe_succ || is_load_waiting) {
+              idx_load = idx_tag_pair_load.first;
+              tag_load = idx_tag_pair_load.second;
+
+              is_load_waiting = false;
+              #pragma unroll
+              for (uint i=0; i<QUEUE_SIZE; ++i) {
+                auto st_entry = store_entries[i];
+                if (st_entry.idx == idx_load && st_entry.tag < tag_load) {
+                  is_load_waiting = true;
+                }
+              }
+
+              if (!is_load_waiting) {
+                // Not in store_q, we can safely issue ld.
+                val_load = PipelinedLSU::load(data.get_pointer() + idx_load);
+              }
+
+              // Setting 'consumer_load_succ' to false forces a write to consumer pipe.
+              consumer_load_succ = is_load_waiting;
+            }
           }
-        }
-        if (!consumer_load_succ) {
-          ld_val_pipe::write(val_load, consumer_load_succ);
-        }
-        /* End Load 1 Logic */
+          if (!consumer_load_succ) {
+            ld_val_pipes::template PipeAt<k>::write(val_load, consumer_load_succ);
+          }
+        });
+        /* End Load Logic */
       
         /* Start Store 1 Logic */
         bool is_space_in_stq = false;

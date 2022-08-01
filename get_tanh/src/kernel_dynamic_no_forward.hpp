@@ -44,9 +44,9 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
   using predicate_calc_pipe = pipe<class predicate_calc_pipe_class, bool, 64>;
   using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, bool>;
 
-  using idx_ld_pipe = pipe<class idx_ld_pipe_class, pair, 64>;
+  using idx_ld_pipes = PipeArray<class idx_ld_pipe_class, pair, 64, 1>;
+  using val_ld_pipes = PipeArray<class val_ld_pipe_class, int, 64, 1>;
   using idx_st_pipe = pipe<class idx_st_pipe_class, pair, 64>;
-  using val_ld_pipe = pipe<class val_ld_pipe_class, int, 64>;
   using val_st_pipe = pipe<class val_st_pipe_class, int, 64>;
 
   q.submit([&](handler &hnd) {
@@ -55,7 +55,7 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
     hnd.single_task<class LoadIdxLd>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; i++) {
         int ld_i = addr_in[i];
-        idx_ld_pipe::write({ld_i, i});
+        idx_ld_pipes::PipeAt<0>::write({ld_i, i});
         // PRINTF("Load idx pipe %d\n", ld_i);
       }
     });
@@ -80,7 +80,7 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
     hnd.single_task<class MainKernel>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; i++) {
         // Input angle
-        auto beta = val_ld_pipe::read(); // beta = A[addr_in[i]];
+        auto beta = val_ld_pipes::PipeAt<0>::read(); // beta = A[addr_in[i]];
         // Result of tanh, sinh and cosh
         int result = 4096; // Saturation effect
 
@@ -98,7 +98,8 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
     });
   });
 
-  StoreQueueNoForward<idx_ld_pipe, val_ld_pipe, pair, 
+  constexpr int kNumLds = 1;
+  StoreQueueNoForward<idx_ld_pipes, val_ld_pipes, kNumLds, pair, 
              idx_st_pipe, val_st_pipe, end_storeq_signal_pipe, int, Q_SIZE, 12> (q, A_buf);
 
 
