@@ -7,6 +7,8 @@
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
+#include "store_queue.hpp"
+
 using namespace sycl;
 
 // The default PipelinedLSU will start a load/store immediately, which the memory disambiguation 
@@ -19,20 +21,13 @@ using PipelinedLSU = ext::intel::lsu<>;
 #endif
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
-constexpr uint STORE_LATENCY = 12; // This should be gotten from static analysis.
 
-
-struct store_entry {
-  int idx; // This should be the full address in a real impl.
-  bool executed;
-  int countdown;
-  int tag;
-};
-
+/// <val, tag>
 struct pair {
-  int queue_idx; 
-  uint store_idx; 
+  int first; 
+  int second; 
 };
+
 
 
 double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::vector<uint> &weight,
@@ -45,11 +40,14 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
   buffer weight_buf(weight);
   buffer hist_buf(hist);
 
+  constexpr int kNumLdPipes = 1;
+  using idx_ld_pipes = PipeArray<class feature_load_pipe_class, pair, 64, kNumLdPipes>;
+  using val_ld_pipes = PipeArray<class hist_load_pipe_class, uint, 64, kNumLdPipes>;
+  using idx_st_pipes = pipe<class feature_store_pipe_class, pair, 64>;
+  using val_st_pipes = pipe<class hist_store_pipe_class, uint, 64>;
   using weight_load_pipe = pipe<class weight_load_pipe_class, uint, 64>;
-  using idx_load_pipe = pipe<class feature_load_pipe_class, uint, 64>;
-  using idx_store_pipe = pipe<class feature_store_pipe_class, uint, 64>;
-  using val_load_pipe = pipe<class hist_load_pipe_class, uint, 64>;
-  using val_store_pipe = pipe<class hist_store_pipe_class, uint, 64>;
+
+  using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, bool>;
 
   q.submit([&](handler &hnd) {
     accessor weight(weight_buf, hnd, read_only);
@@ -66,137 +64,34 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
     accessor feature(feature_buf, hnd, read_only);
     hnd.single_task<class LoadFeature>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) 
-        idx_load_pipe::write(feature[i]);
+        idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i});
     });
   });
   q.submit([&](handler &hnd) {
     accessor feature(feature_buf, hnd, read_only);
     hnd.single_task<class LoadFeature2>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) 
-        idx_store_pipe::write(feature[i]);
+        idx_st_pipes::write({int(feature[i]), i});
     });
   });
  
 
-  q.submit([&](handler &hnd) {
-    accessor hist(hist_buf, hnd, read_write);
+  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, 
+             idx_st_pipes, val_st_pipes, end_storeq_signal_pipe, Q_SIZE, 12> (q, hist_buf);
 
-    hnd.single_task<class LoadStoreHist>([=]() [[intel::kernel_args_restrict]] {
-      [[intel::fpga_register]] store_entry store_entries[STORE_Q_SIZE];
-      // A FIFO of {idx_into_store_q, idx_into_hist} pairs.
-      [[intel::fpga_register]] pair store_idx_fifo[STORE_Q_SIZE];
-
-      int i_store_val = 0;
-      int i_store_idx = 0;
-      int i_load = 0;
-
-      uint idx_load, idx_store, val_load, val_store;
-      int store_idx_fifo_head = 0;
-
-      bool val_load_pipe_write_succ = true;
-      bool is_load_waiting_for_val = false;
-
-      [[intel::ivdep]] 
-      while (i_store_val < array_size) {
-        /* Start Load Logic */
-        if (i_load < array_size && i_load <= i_store_idx && val_load_pipe_write_succ) {
-          bool idx_load_pipe_succ = false;
-
-          if (!is_load_waiting_for_val) {
-            idx_load = idx_load_pipe::read(idx_load_pipe_succ);
-          }
-
-          if (idx_load_pipe_succ || is_load_waiting_for_val) {
-
-            bool _is_load_waiting_for_val = false;
-            #pragma unroll
-            for (uint i=0; i<STORE_Q_SIZE; ++i) {
-              if (store_entries[i].idx == idx_load && store_entries[i].countdown > 0 &&
-                  store_entries[i].tag < i_load) {
-                _is_load_waiting_for_val |= true;
-              }
-            }
-            
-            is_load_waiting_for_val = _is_load_waiting_for_val;
-
-            if (!is_load_waiting_for_val) {
-              val_load = PipelinedLSU::load(hist.get_pointer() + idx_load);
-              val_load_pipe_write_succ = false;
-            }
-          }
-        }
-        
-        if (i_load < array_size && i_load <= i_store_idx && !val_load_pipe_write_succ) {
-          val_load_pipe::write(val_load, val_load_pipe_write_succ);
-          if (val_load_pipe_write_succ) i_load++;
-        }
-        /* End Load Logic */
-      
-
-        /* Start Store Logic */
-        int next_entry_slot = -1;
-        #pragma unroll
-        for (uint i=0; i<STORE_Q_SIZE; ++i) {
-          bool exec = store_entries[i].executed;
-          int count = store_entries[i].countdown;
-
-          if (exec) {
-            store_entries[i].countdown--;
-          }
-
-          if (count <= 1) {
-            store_entries[i].executed = false;
-            next_entry_slot = i;
-          }
-        }
-
-        bool idx_store_pipe_succ = false;
-        if (next_entry_slot != -1 && store_idx_fifo_head < STORE_Q_SIZE) {
-          idx_store = idx_store_pipe::read(idx_store_pipe_succ);
-        }
-
-        if (idx_store_pipe_succ) {
-          store_entries[next_entry_slot] = {(int) idx_store, false, STORE_LATENCY, i_store_idx};
-          store_idx_fifo[store_idx_fifo_head] = {next_entry_slot, idx_store};
-
-          i_store_idx++;
-          store_idx_fifo_head++;
-        }
-        
-        bool val_store_pipe_succ = false;
-        if (i_store_idx > i_store_val) {
-          val_store = val_store_pipe::read(val_store_pipe_succ);
-        }
-
-        if (val_store_pipe_succ) {
-          auto entry_store_idx_pair = store_idx_fifo[0];           
-          PipelinedLSU::store(hist.get_pointer() + entry_store_idx_pair.store_idx, val_store);
-          store_entries[entry_store_idx_pair.queue_idx].executed = true;
-
-          #pragma unroll
-          for (uint i=1; i<STORE_Q_SIZE; ++i) {
-            store_idx_fifo[i-1] = store_idx_fifo[i];
-          }
-          store_idx_fifo_head--;
-
-          i_store_val++;
-        }
-        /* End Store Logic */
-      }
-
-    });
-  });
 
   auto event = q.submit([&](handler &hnd) {
     hnd.single_task<class Compute>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
         uint wt = weight_load_pipe::read();
-        uint hist = val_load_pipe::read();
+        uint hist = val_ld_pipes::PipeAt<0>::read();
 
         auto new_hist = hist + wt;
 
-        val_store_pipe::write(new_hist);
+        val_st_pipes::write(new_hist);
       }
+
+      end_storeq_signal_pipe::write(0); 
     });
   });
 
