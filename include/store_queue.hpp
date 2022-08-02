@@ -1,5 +1,7 @@
 /// Generic Store Queue 
 
+#pragma once
+
 #include "CL/sycl/access/access.hpp"
 #include "CL/sycl/builtins.hpp"
 #include "CL/sycl/properties/accessor_properties.hpp"
@@ -8,10 +10,12 @@
 #include <vector>
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
+#include <sycl/ext/intel/ac_types/ac_int.hpp>
 
 #include "pipe_utils.hpp"
 #include "tuple.hpp"
 #include "unrolled_loop.hpp"
+#include "constexpr_math.hpp"
 
 
 using namespace sycl;
@@ -43,8 +47,11 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
     int idx; // This should be the full address in a real impl.
     int tag;
     bool waiting_for_val;
-    int countdown;
+    int8_t countdown;
   };
+
+  constexpr int kQueueLoopIterBitSize = fpga_tools::BitsForMaxValue<QUEUE_SIZE+1>();
+  using storeq_idx_t = ac_int<kQueueLoopIterBitSize, false>;
 
   q.submit([&](handler &hnd) {
     accessor data(data_buf, hnd, read_write);
@@ -63,8 +70,8 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
       // How many store values were accepted from st_val pipe.
       int i_store_val = 0;
       // Pointers into the store_entries circular buffer. Tail is for values, Head for idxs.
-      int stq_tail = 0;
-      int stq_head = 0;
+      storeq_idx_t stq_tail = 0;
+      storeq_idx_t stq_head = 0;
 
       int tag_store = -1;
       int idx_store;
@@ -118,7 +125,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
                 // by finding the store with the max_tag, such that max_tag < this_ld_tag
                 int max_tag = -1; 
                 #pragma unroll
-                for (uint i=0; i<QUEUE_SIZE; ++i) {
+                for (storeq_idx_t i=0; i<QUEUE_SIZE; ++i) {
                   auto st_entry = store_entries[i];
                   if (st_entry.idx == idx_load && st_entry.tag < tag_load && st_entry.tag > max_tag) {
                     is_load_waiting = st_entry.waiting_for_val;
@@ -135,7 +142,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
               else {
                 int max_tag = -1; 
                 #pragma unroll
-                for (uint i=0; i<QUEUE_SIZE; ++i) {
+                for (storeq_idx_t i=0; i<QUEUE_SIZE; ++i) {
                   auto st_entry = store_entries[i];
                   if (st_entry.idx == idx_load && st_entry.tag < tag_load) {
                     is_load_waiting = true;
@@ -161,15 +168,15 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
         /* Start Store 1 Logic */
         bool is_space_in_stq = false;
         #pragma unroll
-        for (uint i=0; i<QUEUE_SIZE; ++i) {
+        for (storeq_idx_t i=0; i<QUEUE_SIZE; ++i) {
           // Decrement count, and invalidate idexes if count below 0.
-          const int count = store_entries[i].countdown;
-          const int ste_idx = store_entries[i].idx;
+          const auto count = store_entries[i].countdown;
+          const auto ste_idx = store_entries[i].idx;
 
-          if (count > 0) store_entries[i].countdown--;
+          if (count > int8_t(0)) store_entries[i].countdown--;
           if (ste_idx == -1) is_space_in_stq |= true;
 
-          if (count == 1 && !store_entries[i].waiting_for_val) {
+          if (count == int8_t(1) && !store_entries[i].waiting_for_val) {
             store_entries[i].idx = -1;
             is_space_in_stq |= true;
           }
@@ -206,7 +213,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
             // Add value to corresponding store entry, store to mem, and start counter.
             const auto stq_idx = stq_tail;
             PipelinedLSU::store(data.get_pointer() + store_entries[stq_idx].idx, val_store);
-            store_entries[stq_idx].countdown = ST_LATENCY;
+            store_entries[stq_idx].countdown = int8_t(ST_LATENCY);
             store_entries[stq_idx].waiting_for_val = false;
 
             if constexpr (FORWARD) {
