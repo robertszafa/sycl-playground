@@ -65,18 +65,20 @@ double histogram_kernel(queue &q, const std::vector<uint> &feature, const std::v
     });
   });
   
+
+  constexpr int kNumStoreOps = 1;
   q.submit([&](handler &hnd) {
     accessor feature(feature_buf, hnd, read_only);
     hnd.single_task<class LoadFeature>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) 
-        idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i});
+        idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i*kNumStoreOps + 0});
     });
   });
   q.submit([&](handler &hnd) {
     accessor feature(feature_buf, hnd, read_only);
     hnd.single_task<class LoadFeature2>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) 
-        idx_st_pipe::write({int(feature[i]), i});
+        idx_st_pipe::write({int(feature[i]), i*kNumStoreOps + 1});
     });
   });
 

@@ -5,9 +5,9 @@
 #include <iostream>
 #include <vector>
 
-#include "store_queue.hpp"
-
 #include <sycl/ext/intel/fpga_extensions.hpp>
+
+#include "store_queue.hpp"
 
 using namespace sycl;
 
@@ -54,13 +54,15 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
   using idx_st_pipe = pipe<class idx_st_pipe_class, pair, 64>;
   using val_st_pipe = pipe<class val_st_pipe_class, int, 64>;
 
+
+  constexpr int kNumStoreOps = 1;
   q.submit([&](handler &hnd) {
     accessor addr_in(addr_in_buf, hnd, read_only);
 
     hnd.single_task<class LoadIdxLd>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; i++) {
         int ld_i = addr_in[i];
-        idx_ld_pipes::PipeAt<0>::write({ld_i, i});
+        idx_ld_pipes::PipeAt<0>::write({ld_i, i*kNumStoreOps + 0});
       }
     });
   });
@@ -71,7 +73,7 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
     hnd.single_task<class LoadIdxSt>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; i++) {
         int st_i = addr_out[i];
-        idx_st_pipe::write({st_i, i});
+        idx_st_pipe::write({st_i, i*kNumStoreOps + 1});
       }
     });
   });

@@ -11,22 +11,14 @@
 
 using namespace sycl;
 
-#ifdef __SYCL_DEVICE_ONLY__
-  #define CL_CONSTANT __attribute__((opencl_constant))
-#else
-  #define CL_CONSTANT
-#endif
-
-#define PRINTF(format, ...) { \
-            static const CL_CONSTANT char _format[] = format; \
-            sycl::ext::oneapi::experimental::printf(_format, ## __VA_ARGS__); }
+// The default PipelinedLSU will start a load/store immediately, which the memory disambiguation 
+// logic relies upon.
+// A BurstCoalescedLSU would instead of waiting for more requests to arrive for a coalesced access.
 using PipelinedLSU = ext::intel::lsu<>;
 
 #ifndef Q_SIZE
   #define Q_SIZE 8
 #endif
-
-constexpr uint STORE_Q_SIZE = Q_SIZE;
 
 /// <val, tag>
 struct pair {
@@ -81,12 +73,13 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
     });
   });
   
+  constexpr int kNumStoreOps = 1;
   q.submit([&](handler &hnd) {
     accessor feature(feature_buf, hnd, read_only);
     hnd.single_task<class LoadFeature>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
         if (weight_load_2_pipe::read() > 0)
-          idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i});
+          idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i*kNumStoreOps + 0});
       }
     });
   });
@@ -95,7 +88,7 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
     hnd.single_task<class LoadFeature2>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
         if (weight_load_3_pipe::read() > 0)
-          idx_st_pipe::write({int(feature[i]), i});
+          idx_st_pipe::write({int(feature[i]), i*kNumStoreOps + 1});
         else 
           idx_st_pipe::write({-1, i});
       }

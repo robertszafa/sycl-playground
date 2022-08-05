@@ -53,6 +53,7 @@ double spmv_kernel(queue &q,
   buffer col_buf(col);
   buffer a_buf(a);
 
+  constexpr int kNumStoreOps = 1;
   constexpr int kNumLdPipes = 2;
   using idx_ld_pipes = PipeArray<class idx_ld_pipes_class, pair, 64, kNumLdPipes>;
   using val_ld_pipes = PipeArray<class val_ld_pipes_class, float, 64, kNumLdPipes>;
@@ -84,7 +85,7 @@ double spmv_kernel(queue &q,
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           auto load_idx_1 = (k - 1) * M + col[p];
-          idx_ld_pipes::PipeAt<0>::write({load_idx_1, tag});
+          idx_ld_pipes::PipeAt<0>::write({load_idx_1, tag*kNumStoreOps + 0});
 
           tag++;
         }
@@ -100,7 +101,7 @@ double spmv_kernel(queue &q,
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           auto load_idx_2 = k * M + row[p];
-          idx_ld_pipes::PipeAt<1>::write({load_idx_2, tag});
+          idx_ld_pipes::PipeAt<1>::write({load_idx_2, tag*kNumStoreOps + 0});
 
           tag++;
         }
@@ -117,7 +118,7 @@ double spmv_kernel(queue &q,
         for (int p = 0; p < M; p++) {
           auto store_idx = k * M + row[p];
 
-          idx_st_pipe::write({store_idx, tag});
+          idx_st_pipe::write({store_idx, tag*kNumStoreOps + 1});
           tag++;
         }
       }
