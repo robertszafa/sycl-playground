@@ -136,7 +136,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
               for (uint i=0; i<QUEUE_SIZE; ++i) {
                 auto st_entry = store_entries[i];
                 if (st_entry.idx == idx_load && st_entry.tag <= tag_load && st_entry.tag > max_tag) {
-                  is_load_waiting = st_entry.waiting_for_val;
+                  is_load_waiting |= st_entry.waiting_for_val;
                   val_load = store_entries_val[i];
                   max_tag = st_entry.tag;
                 }
