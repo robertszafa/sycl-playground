@@ -13,7 +13,7 @@ Q_SIZE := 2
 endif
 
 # Store Queue
-INC := /home/rob/git/sycl-playground/include
+INC := ../include
 
 SRC := src/main.cpp
 HDR := $(KERNEL_SRC) $(INC)/store_queue.hpp

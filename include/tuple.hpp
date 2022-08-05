@@ -4,6 +4,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "unrolled_loop.hpp"
+
 namespace fpga_tools {
 
 //
@@ -39,6 +41,53 @@ struct Tuple {
   // helper to get the last element in the tuple
   //
   auto& last() { return get<NumTys - 1>(); }
+
+  // inline bool operator==(const Tuple& rhs) {
+  //     bool res = this-> template get<0>() == rhs. template get<0>();;
+
+  //     UnrolledLoop<1, NumTys>([&](auto k) {
+  //       res = res && this-> template get<k>() == rhs. template get<k>();;
+  //     });
+
+  //     return res;
+  // }
+  
+  // inline bool operator<(const Tuple& rhs) {
+  //     bool res = this-> template get<0>() < rhs. template get<0>();
+
+  //     UnrolledLoop<1, NumTys>([&](auto k) {
+  //       if (!res)
+  //         res = res && this-> template get<k>() < rhs. template get<k>();;
+  //     });
+
+  //     return res;
+  // }
+  
+  // inline bool operator>(const Tuple& rhs) const {
+  //     bool res = this-> template get<0>() > rhs. template get<0>();
+
+  //     fpga_tools::UnrolledLoop<1, rhs.NumTys>([&](auto k) {
+  //       if (!res)
+  //         res = res && this-> template get<k>() > rhs. template get<k>();;
+  //     });
+
+  //     return res;
+  // }
+
+  // inline bool operator<=(const Tuple& rhs) {
+  //     bool res = this-> template get<0>() <= rhs. template get<0>();
+
+  //     UnrolledLoop<1, NumTys>([&](auto k) {
+  //       res = res && this-> template get<k>() <= rhs. template get<k>();;
+  //     });
+
+  //     return res;
+  // }
+
+  // template <typename T, typename... RestTypes>
+  // bool operator==(const Tuple<T, RestTypes...>& lhs, const Tuple<T, RestTypes...>& rhs) {
+  //     return lhs. template get<NumTys - 1>() == rhs. template get<NumTys - 1>();
+  // }
 
  private:
   //
@@ -116,5 +165,6 @@ template <typename Type, int N>
 using NTuple = make_NTuple<N, Type>;
 
 }  // namespace fpga_tools
+
 
 #endif /* __TUPLE_HPP__ */
