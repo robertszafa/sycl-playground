@@ -26,7 +26,7 @@ using namespace fpga_tools;
 #else
   #define CL_CONSTANT
 #endif
-#define PRINTF(format, ...) //{ \
+#define PRINTF(format, ...) { \
             static const CL_CONSTANT char _format[] = format; \
             sycl::ext::oneapi::experimental::printf(_format, ## __VA_ARGS__); }
 
@@ -72,8 +72,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
       storeq_idx_t stq_tail = 0;
       storeq_idx_t stq_head = 0;
 
-      // tag_store will always start at 1.
-      int tag_store = 1;
+      int tag_store = 0;
       int idx_store;
       T_val val_store;
       T_idx_tag_pair idx_tag_pair_store;
