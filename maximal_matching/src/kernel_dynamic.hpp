@@ -29,7 +29,7 @@ struct pair {
 
 double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vector<int> &vertices,
                                int *out, const int num_edges) {
-  #if dynamic_no_forward
+  #if dynamic_no_forward_sched
   constexpr bool IS_FORWARDING_Q = false;
   std::cout << "Dynamic (no forward) HLS\n";
 #else

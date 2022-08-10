@@ -28,7 +28,7 @@ struct pair {
 
 double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> addr_in, 
                        const std::vector<int> addr_out) {
-#if dynamic_no_forward
+#if dynamic_no_forward_sched
   constexpr bool IS_FORWARDING_Q = false;
   std::cout << "Dynamic (no forward) HLS\n";
 #else

@@ -29,7 +29,7 @@ struct pair {
 double histogram_if_kernel(queue &q, const std::vector<uint> &feature, 
                            const std::vector<uint> &weight, std::vector<uint> &hist) {
 
-#if dynamic_no_forward
+#if dynamic_no_forward_sched
   constexpr bool IS_FORWARDING_Q = false;
   std::cout << "Dynamic (no forward) HLS\n";
 #else

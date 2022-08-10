@@ -40,7 +40,7 @@ double spmv_kernel(queue &q,
                    const std::vector<int> &col,
                    std::vector<float> &a,             
                    const int M) {
-#if dynamic_no_forward
+#if dynamic_no_forward_sched
   constexpr bool IS_FORWARDING_Q = false;
   std::cout << "Dynamic (no forward) HLS\n";
 #else
