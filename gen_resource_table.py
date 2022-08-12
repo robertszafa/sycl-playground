@@ -23,21 +23,24 @@ POWER_CS_FILE = 'power.csv'
 def get_resources(bin):
     hw_prj = bin.replace('_sim', '') + '.prj'
 
-    res = {}
-    with open(f'{hw_prj}/acl_quartus_report.txt', 'r') as f:
-        report_str = f.read()
+    res = {'aluts' : 0, 'regs' : 0, 'rams' : 0, 'dsps' : 0, 'freq' : 0}
+    try:
+        with open(f'{hw_prj}/acl_quartus_report.txt', 'r') as f:
+            report_str = f.read()
 
-        alut_usage_str = re.findall("ALUTs: (\d+)", report_str)
-        reg_usage_str = re.findall("Registers: ([,\d]+)", report_str)
-        ram_usage_str = re.findall("RAM blocks: (.*?)/", report_str)
-        dsp_usage_str = re.findall("DSP blocks: (.*?)/", report_str)
-        freq_str = re.findall("Actual clock freq: (\d+)", report_str)
+            alut_usage_str = re.findall("ALUTs: (\d+)", report_str)
+            reg_usage_str = re.findall("Registers: ([,\d]+)", report_str)
+            ram_usage_str = re.findall("RAM blocks: (.*?)/", report_str)
+            dsp_usage_str = re.findall("DSP blocks: (.*?)/", report_str)
+            freq_str = re.findall("Actual clock freq: (\d+)", report_str)
 
-        res['aluts'] = int(re.sub("[^0-9]", "", alut_usage_str[0]))
-        res['regs'] = int(re.sub("[^0-9]", "", reg_usage_str[0]))
-        res['rams'] = int(re.sub("[^0-9]", "", ram_usage_str[0]))
-        res['dsps'] = int(re.sub("[^0-9]", "", dsp_usage_str[0]))
-        res['freq'] = freq_str[0]
+            res['aluts'] = int(re.sub("[^0-9]", "", alut_usage_str[0]))
+            res['regs'] = int(re.sub("[^0-9]", "", reg_usage_str[0]))
+            res['rams'] = int(re.sub("[^0-9]", "", ram_usage_str[0]))
+            res['dsps'] = int(re.sub("[^0-9]", "", dsp_usage_str[0]))
+            res['freq'] = freq_str[0]
+    except:
+        pass
     
     return res
 
