@@ -1,6 +1,7 @@
 /// Generic Store Queue 
 
-#pragma once
+#ifndef __STORE_QUEUE_HPP__
+#define __STORE_QUEUE_HPP__
 
 #include "CL/sycl/access/access.hpp"
 #include "CL/sycl/builtins.hpp"
@@ -32,17 +33,22 @@ using namespace fpga_tools;
 
 
 // The default PipelinedLSU will start a load/store immediately, which the memory disambiguation 
-// logic relies upon.
-// A BurstCoalescedLSU would instead of waiting for more requests to arrive for a coalesced access.
+// logic relies upon. A BurstCoalescedLSU would instead of waiting for more requests to arrive for 
+// a coalesced access. (Use sycl::ext::intel::experimental::lsu<> if want latency control).
 using PipelinedLSU = ext::intel::lsu<>;
-
+  
 // Forward declaration to avoid name mangling.
 class StoreQueueKernel;
 
-template <typename ld_idx_pipes, typename ld_val_pipes, int num_lds, typename T_idx_tag_pair,
+struct pair {
+  int first;
+  int second;
+};
+
+template <typename ld_idx_pipes, typename ld_val_pipes, int num_lds,
           typename st_idx_pipe, typename st_val_pipe, typename end_signal_pipe, 
           bool FORWARD=true, int QUEUE_SIZE=8, int ST_LATENCY=12, typename T_val>
-void StoreQueue(queue &q, buffer<T_val> &data_buf) {
+event StoreQueue(queue &q, device_ptr<T_val> data) {
 
   constexpr int kQueueLoopIterBitSize = fpga_tools::BitsForMaxValue<QUEUE_SIZE+1>();
   using storeq_idx_t = ac_int<kQueueLoopIterBitSize, false>;
@@ -54,9 +60,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
     int16_t countdown;
   };
 
-  q.submit([&](handler &hnd) {
-    accessor data(data_buf, hnd, read_write);
-
+  auto event = q.submit([&](handler &hnd) {
     hnd.single_task<StoreQueueKernel>([=]() [[intel::kernel_args_restrict]] {
       [[intel::fpga_register]] store_entry store_entries[QUEUE_SIZE];
       [[intel::fpga_register]] T_val store_entries_val[QUEUE_SIZE];
@@ -75,13 +79,13 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
       int tag_store = 0;
       int idx_store;
       T_val val_store;
-      T_idx_tag_pair idx_tag_pair_store;
+      pair idx_tag_pair_store;
 
       // TODO: to be more general, the initial load tags should be a template arg coming
       //       from program analysis: i.e. tags should reflect program order.
       // Scalar book-keeping values, one per load (NTuple is expanded at compile time).
       NTuple<T_val, num_lds> val_load_tp;
-      NTuple<T_idx_tag_pair, num_lds> idx_tag_pair_load_tp;
+      NTuple<pair, num_lds> idx_tag_pair_load_tp;
       NTuple<int, num_lds> idx_load_tp;
       NTuple<int, num_lds> tag_load_tp;
       NTuple<bool, num_lds> consumer_load_succ_tp;
@@ -142,7 +146,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
               }
 
               if (!is_load_waiting && max_tag == -1) {
-                val_load = PipelinedLSU::load(data.get_pointer() + idx_load);
+                val_load = PipelinedLSU::load(data + idx_load);
               }
             }
             else {
@@ -153,7 +157,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
               }
 
               if (!is_load_waiting) {
-                val_load = PipelinedLSU::load(data.get_pointer() + idx_load);
+                val_load = PipelinedLSU::load(data + idx_load);
               }
             }
 
@@ -208,7 +212,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
 
           if (val_store_pipe_succ) {
 
-            PipelinedLSU::store(data.get_pointer() + store_entries[stq_tail].idx, val_store);
+            PipelinedLSU::store(data + store_entries[stq_tail].idx, val_store);
             store_entries[stq_tail].waiting_for_val = false;
             store_entries[stq_tail].countdown = int16_t(ST_LATENCY);
             if constexpr (FORWARD) store_entries_val[stq_tail] = val_store;
@@ -225,4 +229,7 @@ void StoreQueue(queue &q, buffer<T_val> &data_buf) {
     });
   });
 
+  return event;
 }
+
+#endif

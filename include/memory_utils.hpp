@@ -229,6 +229,28 @@ void PipeToMemory(PtrT out_ptr, size_t full_count, size_t remainder_count) {
   }
 }
 
+/// 1. Allocate device_memory (same num bytes as in host_vector)
+/// 2. Transfer data host_vector->device_memory
+/// 3. Return device_ptr to device_memory
+template<typename T>
+device_ptr<T> toDevice(const std::vector<T> &host_vector, queue &q) {
+  T* device_data = malloc_device<T>(host_vector.size(), q);
+  q.copy(host_vector.data(), device_data, host_vector.size()).wait();
+  return device_ptr<T>(device_data);
+}
+template<typename T, int N>
+device_ptr<T> toDevice(const T* host_array[N], queue &q) {
+  T* device_data = malloc_device<T>(N, q);
+  q.copy(host_array, device_data, N).wait();
+  return device_ptr<T>(device_data);
+}
+template<typename T>
+device_ptr<T> toDevice(const T* host_array, const int N, queue &q) {
+  T* device_data = malloc_device<T>(N, q);
+  q.copy(host_array, device_data, N).wait();
+  return device_ptr<T>(device_data);
+}
+
 }  // namespace fpga_tools
 
 #endif /* __MEMORY_UTILS_HPP__ */
