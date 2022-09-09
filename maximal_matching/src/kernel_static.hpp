@@ -7,7 +7,10 @@
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
+#include "memory_utils.hpp"
+
 using namespace sycl;
+using namespace fpga_tools;
 
 #ifdef __SYCL_DEVICE_ONLY__
   #define CL_CONSTANT __attribute__((opencl_constant))
@@ -20,22 +23,16 @@ using namespace sycl;
             sycl::ext::oneapi::experimental::printf(_format, ## __VA_ARGS__); }
 
 
-double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vector<int> &vertices,
-                               int *out, const int num_edges) {
-  std::cout << "Static HLS\n";
+double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::vector<int> &h_vertices,
+                               int *h_out, const int num_edges) {
+  const int* edges = toDevice(h_edges, q);
+  int* vertices = toDevice(h_vertices, q);
+  int* out = toDevice(h_out, 1, q);
 
-  buffer edges_buf(edges);
-  buffer vertices_buf(vertices);
-  buffer out_buf(out, range{1});
-
-  event e = q.submit([&](handler &hnd) {
-    accessor edges(edges_buf, hnd, read_only);
-    accessor vertices(vertices_buf, hnd, read_write);
-    accessor out_pointer(out_buf, hnd, write_only);
-
+  auto event = q.submit([&](handler &hnd) {
     hnd.single_task<class StaticKernel>([=]() [[intel::kernel_args_restrict]] {
       int i = 0;
-      int out = 0;
+      int out_scalar = 0;
 
       while (i < num_edges) {
         int j = i * 2;
@@ -47,18 +44,22 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
           vertices[u] = v;
           vertices[v] = u;
 
-          out = out + 1;
+          out_scalar = out_scalar + 1;
         }
 
         i = i + 1;
       }
 
-      out_pointer[0] = out;
+      *out = out_scalar;
     });
   });
 
-  auto start = e.get_profiling_info<info::event_profiling::command_start>();
-  auto end = e.get_profiling_info<info::event_profiling::command_end>();
+  event.wait();
+  q.memcpy(h_vertices.data(), vertices, sizeof(h_vertices[0]) * h_vertices.size()).wait();
+  q.memcpy(h_out, out, sizeof(h_out[0])).wait();
+
+  auto start = event.get_profiling_info<info::event_profiling::command_start>();
+  auto end = event.get_profiling_info<info::event_profiling::command_end>();
   double time_in_ms = static_cast<double>(end - start) / 1000000;
 
   return time_in_ms;

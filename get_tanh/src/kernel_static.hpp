@@ -7,31 +7,32 @@
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
+#include "memory_utils.hpp"
+
 using namespace sycl;
+using namespace fpga_tools;
 
 class get_tanhKernel;
 
-using PipelinedLSU = ext::intel::lsu<>;
-
-double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> addr_in, const std::vector<int> addr_out) {
+double get_tanh_kernel(queue &q, std::vector<int> &h_A, const std::vector<int> h_addr_in,
+                       const std::vector<int> h_addr_out) {
   std::cout << "Static HLS\n";
 
-  const uint array_size = A.size();
+  const uint array_size = h_A.size();
 
-  buffer A_buf(A);
-  buffer addr_in_buf(addr_in);
-  buffer addr_out_buf(addr_out);
+  int* A = toDevice(h_A, q);
+  int* addr_in = toDevice(h_addr_in, q);
+  int* addr_out = toDevice(h_addr_out, q);
 
   auto event = q.submit([&](handler &hnd) {
-    accessor A(A_buf, hnd, read_write);
-    accessor addr_out(addr_out_buf, hnd, read_only);
-    accessor addr_in(addr_in_buf, hnd, read_only);
-
     hnd.single_task<get_tanhKernel>([=]() [[intel::kernel_args_restrict]] {
-      [[intel::fpga_register]] int atanh[12] = {0x08C9, 0x0416, 0x0202, 0x0100, 0x0080, 0x0064,
+      // [[intel::fpga_register]] 
+      int atanh[12] = {0x08C9, 0x0416, 0x0202, 0x0100, 0x0080, 0x0064,
                                                 0x0032, 0x0010, 0x0008, 0x0004, 0x0002, 0x0001};
-      [[intel::fpga_register]] int cosh[5] = {0x1000, 0x18B0, 0x3C31, 0xA115, 0x1B4EE};
-      [[intel::fpga_register]] int sinh[5] = {0x0, 0x12CD, 0x3A07, 0xA049, 0x1B4A3};
+      // [[intel::fpga_register]] 
+      int cosh[5] = {0x1000, 0x18B0, 0x3C31, 0xA115, 0x1B4EE};
+      // [[intel::fpga_register]] 
+      int sinh[5] = {0x0, 0x12CD, 0x3A07, 0xA049, 0x1B4A3};
 
 
       for (int i = 0; i < array_size; i++) {
@@ -112,6 +113,13 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
       }
     });
   });
+
+  event.wait();
+  q.copy(A, h_A.data(), h_A.size()).wait();
+
+  sycl::free(A, q);
+  sycl::free(addr_in, q);
+  sycl::free(addr_out, q);
 
   auto start = event.get_profiling_info<info::event_profiling::command_start>();
   auto end = event.get_profiling_info<info::event_profiling::command_end>();

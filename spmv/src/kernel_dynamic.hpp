@@ -11,13 +11,11 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 #include "store_queue.hpp"
+#include "memory_utils.hpp"
 
 using namespace sycl;
+using namespace fpga_tools;
 
-// The default PipelinedLSU will start a load/store immediately, which the memory disambiguation 
-// logic relies upon.
-// A BurstCoalescedLSU would instead of waiting for more requests to arrive for a coalesced access.
-using PipelinedLSU = ext::intel::lsu<>;
 
 #ifndef Q_SIZE
   #define Q_SIZE 8
@@ -25,21 +23,8 @@ using PipelinedLSU = ext::intel::lsu<>;
 
 constexpr uint STORE_Q_SIZE = Q_SIZE;
 
-/// <val, tag>
-struct pair {
-  int first; 
-  int second; 
-};
-
-
-// Maybe have a seq (1 for exec, 0 for not) pipe for each ld, st and count the tokens such that 
-// loads don't overtake store_idxs
-double spmv_kernel(queue &q, 
-                   std::vector<float> &matrix,       
-                   const std::vector<int> &row,
-                   const std::vector<int> &col,
-                   std::vector<float> &a,             
-                   const int M) {
+double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int> &h_row,
+                   const std::vector<int> &h_col, const std::vector<float> &h_a, const int M) {
 #if dynamic_no_forward_sched
   constexpr bool IS_FORWARDING_Q = false;
   std::cout << "Dynamic (no forward) HLS\n";
@@ -48,10 +33,10 @@ double spmv_kernel(queue &q,
   std::cout << "Dynamic HLS\n";
 #endif
 
-  buffer matrix_buf(matrix);
-  buffer row_buf(row);
-  buffer col_buf(col);
-  buffer a_buf(a);
+  auto matrix = toDevice(h_matrix, q);
+  const auto row = toDevice(h_row, q);
+  const auto col = toDevice(h_col, q);
+  const auto a = toDevice(h_a, q);
 
   constexpr int kNumStoreOps = 1;
   constexpr int kNumLdPipes = 2;
@@ -63,75 +48,69 @@ double spmv_kernel(queue &q,
   using ld_a_pipe = pipe<class ld_a_class, float, 64>;
 
   using end_storeq_signal_pipe = pipe<class end_lsq_signal_class, bool>;
-  
 
-  q.submit([&](handler &hnd) {
-    accessor a(a_buf, hnd, read_only);
-
-    hnd.single_task<class LoadA>([=]() [[intel::kernel_args_restrict]] {
+  q.submit([&](sycl::handler &h) {
+    h.single_task<class LoadA>([=]() [[intel::kernel_args_restrict]] {
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           ld_a_pipe::write(a[p]);
         }
       }
+      PRINTF("done load a\n");
     });
   });
 
-  q.submit([&](handler &hnd) {
-    accessor col(col_buf, hnd, read_only);
-
-    hnd.single_task<class LoadIdx1>([=]() [[intel::kernel_args_restrict]] {
+  q.submit([&](sycl::handler &h) {
+    h.single_task<class LoadIdx1>([=]() [[intel::kernel_args_restrict]] {
       int tag = 0;
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           auto load_idx_1 = (k - 1) * M + col[p];
-          idx_ld_pipes::PipeAt<0>::write({load_idx_1, tag*kNumStoreOps + 0});
+          idx_ld_pipes::PipeAt<0>::write({load_idx_1, tag * kNumStoreOps + 0});
 
           tag++;
         }
       }
+      PRINTF("done loadidxs 0\n");
     });
   });
 
-  q.submit([&](handler &hnd) {
-    accessor row(row_buf, hnd, read_only);
-
-    hnd.single_task<class LoadIdxs2>([=]() [[intel::kernel_args_restrict]] {
+  q.submit([&](sycl::handler &h) {
+    h.single_task<class LoadIdxs2>([=]() [[intel::kernel_args_restrict]] {
       int tag = 0;
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           auto load_idx_2 = k * M + row[p];
-          idx_ld_pipes::PipeAt<1>::write({load_idx_2, tag*kNumStoreOps + 0});
+          idx_ld_pipes::PipeAt<1>::write({load_idx_2, tag * kNumStoreOps + 0});
 
           tag++;
         }
       }
+      PRINTF("done loadidxs 1\n");
     });
   });
 
-  q.submit([&](handler &hnd) {
-    accessor row(row_buf, hnd, read_only);
-
-    hnd.single_task<class StoreIdxs>([=]() [[intel::kernel_args_restrict]] {
+  q.submit([&](sycl::handler &h) {
+    h.single_task<class StoreIdxs>([=]() [[intel::kernel_args_restrict]] {
       int tag = 0;
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           auto store_idx = k * M + row[p];
 
-          idx_st_pipe::write({store_idx, tag*kNumStoreOps + 1});
+          idx_st_pipe::write({store_idx, tag * kNumStoreOps + 1});
           tag++;
         }
       }
+
+      PRINTF("done storeidxs\n");
     });
   });
 
+  auto storeqEvent = StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe,
+                                end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12>(q, device_ptr<float>(matrix));
 
-  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, idx_st_pipe, val_st_pipe, 
-             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, matrix_buf);
-
-
-  auto event = q.submit([&](handler &hnd) {
-    hnd.single_task<class spmv_dynamic>([=]() [[intel::kernel_args_restrict]] {
+  auto event = q.submit([&](sycl::handler &h) {
+    h.single_task<class spmv_dynamic>([=]() [[intel::kernel_args_restrict]] {
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           auto load_x_1 = val_ld_pipes::PipeAt<0>::read(); // matrix[(k - 1) * M + col[p]];
@@ -139,14 +118,24 @@ double spmv_kernel(queue &q,
           auto load_a = ld_a_pipe::read();
 
           auto store_x = load_x_2 + load_a * load_x_1;
-          
+
           val_st_pipe::write(store_x);
         }
       }
 
       end_storeq_signal_pipe::write(1);
+      PRINTF("done\n");
     });
   });
+
+
+  storeqEvent.wait();
+
+  q.memcpy(h_matrix.data(), matrix, sizeof(h_matrix[0]) * h_matrix.size()).wait();
+  sycl::free(matrix, q);
+  sycl::free(row, q);
+  sycl::free(col, q);
+  sycl::free(a, q);
 
   auto start = event.get_profiling_info<info::event_profiling::command_start>();
   auto end = event.get_profiling_info<info::event_profiling::command_end>();

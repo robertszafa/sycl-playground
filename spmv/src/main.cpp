@@ -153,9 +153,9 @@ int main(int argc, char *argv[]) {
       std::cout << "Passed\n";
     } else {
       std::cerr << "Failed";
-      std::cout << " sum(matrix) = " << std::accumulate(matrix.begin(), matrix.end(), 0) << "\n";
+      std::cout << " sum(matrix) = " << std::accumulate(matrix.begin(), matrix.end(), 0.0) << "\n";
       std::cout << " sum(golden_matrix) = " << std::accumulate(golden_matrix.begin(), 
-                                                               golden_matrix.end(), 0) << "\n";
+                                                               golden_matrix.end(), 0.0) << "\n";
     }
 
   } catch (exception const &e) {

@@ -5,30 +5,19 @@
 #include <iostream>
 #include <vector>
 
+#include "memory_utils.hpp"
 #include "store_queue.hpp"
 
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 using namespace sycl;
 
-// The default PipelinedLSU will start a load/store immediately, which the memory disambiguation 
-// logic relies upon.
-// A BurstCoalescedLSU would instead of waiting for more requests to arrive for a coalesced access.
-using PipelinedLSU = ext::intel::lsu<>;
-
 #ifndef Q_SIZE
   #define Q_SIZE 8
 #endif
 
-/// <val, tag>
-struct pair {
-  int first; 
-  int second; 
-};
-
-
-double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vector<int> &vertices,
-                               int *out, const int num_edges) {
+double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::vector<int> &h_vertices,
+                               int *h_out, const int num_edges) {
   #if dynamic_no_forward_sched
   constexpr bool IS_FORWARDING_Q = false;
   std::cout << "Dynamic (no forward) HLS\n";
@@ -37,9 +26,9 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
   std::cout << "Dynamic HLS\n";
 #endif
 
-  buffer edges_buf(edges);
-  buffer vertices_buf(vertices);
-  buffer out_buf(out, range(1));
+  const int* edges = toDevice(h_edges, q);
+  int* vertices = toDevice(h_vertices, q);
+  int* out = toDevice(h_out, 1, q);
 
   constexpr int kNumStoreOps = 2;
   constexpr int kNumLdPipes = 2;
@@ -68,8 +57,6 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
   using val_merge_pred_pipe = pipe<class val_merge_pred_class, bool, 64>;
 
   q.submit([&](handler &hnd) {
-    accessor edges(edges_buf, hnd, read_only);
-
     hnd.single_task<class LoadEdges>([=]() [[intel::kernel_args_restrict]] {
       int i = 0;
 
@@ -88,8 +75,6 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
   });
 
   q.submit([&](handler &hnd) {
-    accessor edges(edges_buf, hnd, read_only);
-
     hnd.single_task<class LoadEdges2>([=]() [[intel::kernel_args_restrict]] {
       int i = 0;
 
@@ -108,8 +93,8 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
   });
 
   
-  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, idx_st_pipe, val_st_pipe, 
-             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, vertices_buf);
+  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe, 
+             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, device_ptr<int>(vertices));
 
 
   q.submit([&](handler &hnd) {
@@ -137,8 +122,6 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
   });
 
   auto event = q.submit([&](handler &hnd) {
-    accessor out_pointer(out_buf, hnd, write_only);
-
     hnd.single_task<class Calculation>([=]() [[intel::kernel_args_restrict]] {
       int i = 0;
       int out_res = 0;
@@ -172,11 +155,13 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &edges, std::vec
       val_merge_pred_pipe::write(0);
       end_storeq_signal_pipe::write(1);
 
-      out_pointer[0] = out_res;
+      *out = out_res;
     });
   });
 
-
+  event.wait();
+  q.memcpy(h_vertices.data(), vertices, sizeof(h_vertices[0]) * h_vertices.size()).wait();
+  q.memcpy(h_out, out, sizeof(h_out[0])).wait();
 
   auto start = event.get_profiling_info<info::event_profiling::command_start>();
   auto end = event.get_profiling_info<info::event_profiling::command_end>();

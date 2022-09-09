@@ -8,26 +8,18 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 #include "store_queue.hpp"
+#include "memory_utils.hpp"
 
 using namespace sycl;
-
-// The default PipelinedLSU will start a load/store immediately, which the memory disambiguation 
-// logic relies upon.
-// A BurstCoalescedLSU would instead of waiting for more requests to arrive for a coalesced access.
-using PipelinedLSU = ext::intel::lsu<>;
+using namespace fpga_tools;
 
 #ifndef Q_SIZE
   #define Q_SIZE 8
 #endif
 
-/// <val, tag>
-struct pair {
-  int first; 
-  int second; 
-};
 
-double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> addr_in, 
-                       const std::vector<int> addr_out) {
+double get_tanh_kernel(queue &q, std::vector<int> &h_A, const std::vector<int> h_addr_in,
+                       const std::vector<int> h_addr_out) {
 #if dynamic_no_forward_sched
   constexpr bool IS_FORWARDING_Q = false;
   std::cout << "Dynamic (no forward) HLS\n";
@@ -36,11 +28,11 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
   std::cout << "Dynamic HLS\n";
 #endif
 
-  const uint array_size = A.size();
+  const uint array_size = h_A.size();
 
-  buffer A_buf(A);
-  buffer addr_in_buf(addr_in);
-  buffer addr_out_buf(addr_out);
+  int* A = toDevice(h_A, q);
+  int* addr_in = toDevice(h_addr_in, q);
+  int* addr_out = toDevice(h_addr_out, q);
 
   using beta_in_pipe = pipe<class beta_in_pipe_class, int, 64>;
   using result_out_pipe = pipe<class result_out_pipe_class, int, 64>;
@@ -57,8 +49,6 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
 
   constexpr int kNumStoreOps = 1;
   q.submit([&](handler &hnd) {
-    accessor addr_in(addr_in_buf, hnd, read_only);
-
     hnd.single_task<class LoadIdxLd>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; i++) {
         int ld_i = addr_in[i];
@@ -68,8 +58,6 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
   });
 
   q.submit([&](handler &hnd) {
-    accessor addr_out(addr_out_buf, hnd, read_only);
-
     hnd.single_task<class LoadIdxSt>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; i++) {
         int st_i = addr_out[i];
@@ -79,14 +67,11 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
   });
 
 
-  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, idx_st_pipe, val_st_pipe, 
-             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, A_buf);
+  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe, 
+             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, device_ptr<int>(A));
 
 
   auto event = q.submit([&](handler &hnd) {
-    accessor addr_in(addr_in_buf, hnd, read_only);
-    accessor addr_out(addr_out_buf, hnd, read_only);
-
     hnd.single_task<class MainKernel>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; i++) {
         // Input angle
@@ -191,6 +176,13 @@ double get_tanh_kernel(queue &q, std::vector<int> &A, const std::vector<int> add
 
     });
   });
+
+  event.wait();
+  q.copy(A, h_A.data(), h_A.size()).wait();
+
+  sycl::free(A, q);
+  sycl::free(addr_in, q);
+  sycl::free(addr_out, q);
 
   auto start = event.get_profiling_info<info::event_profiling::command_start>();
   auto end = event.get_profiling_info<info::event_profiling::command_end>();

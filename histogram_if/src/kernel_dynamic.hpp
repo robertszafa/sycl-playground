@@ -8,26 +8,18 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 #include "store_queue.hpp"
+#include "memory_utils.hpp"
 
 using namespace sycl;
+using namespace fpga_tools;
 
-// The default PipelinedLSU will start a load/store immediately, which the memory disambiguation 
-// logic relies upon.
-// A BurstCoalescedLSU would instead of waiting for more requests to arrive for a coalesced access.
-using PipelinedLSU = ext::intel::lsu<>;
 
 #ifndef Q_SIZE
   #define Q_SIZE 8
 #endif
 
-/// <val, tag>
-struct pair {
-  int first; 
-  int second; 
-};
-
-double histogram_if_kernel(queue &q, const std::vector<uint> &feature, 
-                           const std::vector<uint> &weight, std::vector<uint> &hist) {
+double histogram_if_kernel(queue &q, const std::vector<int> &h_feature, 
+                           const std::vector<int> &h_weight, std::vector<int> &h_hist) {
 
 #if dynamic_no_forward_sched
   constexpr bool IS_FORWARDING_Q = false;
@@ -37,11 +29,11 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
   std::cout << "Dynamic HLS\n";
 #endif
 
-  const uint array_size = feature.size();
+  const uint array_size = h_feature.size();
 
-  buffer feature_buf(feature);
-  buffer weight_buf(weight);
-  buffer hist_buf(hist);
+  int* feature = toDevice(h_feature, q);
+  int* weight = toDevice(h_weight, q);
+  int* hist = toDevice(h_hist, q);
 
   constexpr int kNumLdPipes = 1;
   using idx_ld_pipes = PipeArray<class feature_load_pipe_class, pair, 64, kNumLdPipes>;
@@ -57,7 +49,6 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
   using end_storeq_signal_pipe = pipe<class end_signal_pipe_class, bool>;
 
   q.submit([&](handler &hnd) {
-    accessor weight(weight_buf, hnd, read_only);
     hnd.single_task<class LoadWeight>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
         uint wt = weight[i];
@@ -75,7 +66,6 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
   
   constexpr int kNumStoreOps = 1;
   q.submit([&](handler &hnd) {
-    accessor feature(feature_buf, hnd, read_only);
     hnd.single_task<class LoadFeature>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
         if (weight_load_2_pipe::read() > 0)
@@ -84,7 +74,6 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
     });
   });
   q.submit([&](handler &hnd) {
-    accessor feature(feature_buf, hnd, read_only);
     hnd.single_task<class LoadFeature2>([=]() [[intel::kernel_args_restrict]] {
       for (int i = 0; i < array_size; ++i) {
         if (weight_load_3_pipe::read() > 0)
@@ -95,10 +84,8 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
     });
   });
 
-
-  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, pair, idx_st_pipe, val_st_pipe, 
-             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, hist_buf);
-
+  StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe, 
+             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, device_ptr<int>(hist));
 
   auto event = q.submit([&](handler &hnd) {
     hnd.single_task<class Compute>([=]() [[intel::kernel_args_restrict]] {
@@ -114,7 +101,12 @@ double histogram_if_kernel(queue &q, const std::vector<uint> &feature,
     });
   });
 
+  event.wait();
+  q.copy(hist, h_hist.data(), h_hist.size()).wait();
 
+  sycl::free(hist, q);
+  sycl::free(feature, q);
+  sycl::free(weight, q);
 
   auto start = event.get_profiling_info<info::event_profiling::command_start>();
   auto end = event.get_profiling_info<info::event_profiling::command_end>();

@@ -20,8 +20,8 @@ using namespace sycl;
 
 enum data_distribution { ALL_WAIT, NO_WAIT, PERCENTAGE_WAIT };
 
-void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vector<uint> &hist,
-               const data_distribution distr, const uint percentage) {
+void init_data(std::vector<int> &feature, std::vector<int> &weight, std::vector<int> &hist,
+               const data_distribution distr, const int percentage) {
   std::default_random_engine generator;
   std::uniform_int_distribution<int> distribution(0, 100);
   auto dice = std::bind (distribution, generator);
@@ -42,12 +42,12 @@ void init_data(std::vector<uint> &feature, std::vector<uint> &weight, std::vecto
   }
 }
 
-void histogram_if_cpu(const std::vector<uint> &feature, const std::vector<uint> &weight,
-                   std::vector<uint> &hist, const uint array_size) {
+void histogram_if_cpu(const std::vector<int> &feature, const std::vector<int> &weight,
+                   std::vector<int> &hist, const int array_size) {
   for (int i = 0; i < array_size; ++i) {
-    uint wt = weight[i];
-    uint idx = feature[i];
-    uint x = hist[idx];
+    int wt = weight[i];
+    int idx = feature[i];
+    int x = hist[idx];
 
     if (wt > 0)
       hist[idx] = x + wt;
@@ -71,18 +71,18 @@ static auto exception_handler = [](sycl::exception_list e_list) {
 int main(int argc, char *argv[]) {
   // Get A_SIZE and forward/no-forward from args.
   // defaulats
-  uint ARRAY_SIZE = 64;
+  int ARRAY_SIZE = 64;
   auto DATA_DISTR = data_distribution::ALL_WAIT;
-  uint PERCENTAGE = 5;
+  int PERCENTAGE = 5;
   try {
     if (argc > 1) {
-      ARRAY_SIZE = uint(atoi(argv[1]));
+      ARRAY_SIZE = int(atoi(argv[1]));
     }
     if (argc > 2) {
       DATA_DISTR = data_distribution(atoi(argv[2]));
     }
     if (argc > 3) {
-      PERCENTAGE = uint(atoi(argv[3]));
+      PERCENTAGE = int(atoi(argv[3]));
       std::cout << "Percentage is " << PERCENTAGE << "\n";
       if (PERCENTAGE < 0 || PERCENTAGE > 100) throw std::invalid_argument("Invalid percentage.");
     }
@@ -113,13 +113,13 @@ int main(int argc, char *argv[]) {
 
     // host data
     // inputs
-    std::vector<uint> feature(ARRAY_SIZE);
-    std::vector<uint> weight(ARRAY_SIZE);
-    std::vector<uint> hist(ARRAY_SIZE);
+    std::vector<int> feature(ARRAY_SIZE);
+    std::vector<int> weight(ARRAY_SIZE);
+    std::vector<int> hist(ARRAY_SIZE);
 
     init_data(feature, weight, hist, DATA_DISTR, PERCENTAGE);
 
-    std::vector<uint> hist_cpu(ARRAY_SIZE);
+    std::vector<int> hist_cpu(ARRAY_SIZE);
     std::copy(hist.begin(), hist.end(), hist_cpu.begin());
 
     auto start = std::chrono::steady_clock::now();
