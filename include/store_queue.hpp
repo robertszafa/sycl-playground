@@ -72,6 +72,8 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
       int i_store_idx = 0;
       // How many store values were accepted from st_val pipe.
       int i_store_val = 0;
+      // Total number of stores to commit (supplied by the end_signal).
+      int total_req_stores = 0;
       // Pointers into the store_entries circular buffer. Tail is for values, Head for idxs.
       storeq_idx_t stq_tail = 0;
       storeq_idx_t stq_head = 0;
@@ -102,7 +104,7 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
       bool end_signal = false;
 
       [[intel::ivdep]] 
-      while (!end_signal || (i_store_idx > i_store_val)) {
+      while (!end_signal || (i_store_val < total_req_stores)) {
         /* Start Load  Logic */
         // All loads can proceed in parallel. The below unrolls the template PipeArray/NTuple. 
         UnrolledLoop<num_lds>([&](auto k) {
@@ -223,9 +225,13 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
         }
         /* End Store 1 Logic */
       
-        if (!end_signal) end_signal_pipe::read(end_signal);
+        // The end signal supplies the total number of stores that need to be 
+        // committed before terminating the store queue logic.
+        if (!end_signal) {
+          total_req_stores = end_signal_pipe::read(end_signal);
+        }
+        
       }
-
     });
   });
 

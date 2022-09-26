@@ -38,7 +38,7 @@ double get_tanh_kernel(queue &q, std::vector<int> &h_A, const std::vector<int> h
   using result_out_pipe = pipe<class result_out_pipe_class, int, 64>;
   
   using predicate_calc_pipe = pipe<class predicate_calc_pipe_class, bool, 64>;
-  using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, bool>;
+  using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, int>;
 
   constexpr int kNumLdPipes = 1;
   using idx_ld_pipes = PipeArray<class idx_ld_pipe_class, pair, 64, kNumLdPipes>;
@@ -73,6 +73,7 @@ double get_tanh_kernel(queue &q, std::vector<int> &h_A, const std::vector<int> h
 
   auto event = q.submit([&](handler &hnd) {
     hnd.single_task<class MainKernel>([=]() [[intel::kernel_args_restrict]] {
+      int total_req_stores = 0;
       for (int i = 0; i < array_size; i++) {
         // Input angle
         auto beta = val_ld_pipes::PipeAt<0>::read(); // beta = A[addr_in[i]];
@@ -86,10 +87,11 @@ double get_tanh_kernel(queue &q, std::vector<int> &h_A, const std::vector<int> h
         }
 
         val_st_pipe::write(result); // A[addr_out[i]] = result;
+        total_req_stores++;
       }
 
       predicate_calc_pipe::write(0);
-      end_storeq_signal_pipe::write(0);
+      end_storeq_signal_pipe::write(total_req_stores);
     });
   });
 

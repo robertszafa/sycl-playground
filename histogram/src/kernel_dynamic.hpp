@@ -42,7 +42,7 @@ double histogram_kernel(queue &q, const std::vector<int> &h_feature, const std::
   using idx_st_pipe = pipe<class feature_store_pipe_class, pair, 64>;
   using val_st_pipe = pipe<class hist_store_pipe_class, int, 64>;
 
-  using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, bool>;
+  using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, int>;
 
   q.submit([&](handler &hnd) {
     hnd.single_task<class LoadWeight>([=]() [[intel::kernel_args_restrict]] {
@@ -69,6 +69,7 @@ double histogram_kernel(queue &q, const std::vector<int> &h_feature, const std::
 
   auto event = q.submit([&](handler &hnd) {
     hnd.single_task<class Compute>([=]() [[intel::kernel_args_restrict]] {
+      int total_req_stores = 0;
       for (int i = 0; i < array_size; ++i) {
         int wt = weight_load_pipe::read();
         int hist = val_ld_pipes::PipeAt<0>::read();
@@ -76,9 +77,10 @@ double histogram_kernel(queue &q, const std::vector<int> &h_feature, const std::
         auto new_hist = hist + wt;
 
         val_st_pipe::write(new_hist);
+        total_req_stores++;
       }
 
-      end_storeq_signal_pipe::write(0);
+      end_storeq_signal_pipe::write(total_req_stores);
     });
   });
 

@@ -47,7 +47,7 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
 
   using ld_a_pipe = pipe<class ld_a_class, float, 64>;
 
-  using end_storeq_signal_pipe = pipe<class end_lsq_signal_class, bool>;
+  using end_storeq_signal_pipe = pipe<class end_lsq_signal_class, int>;
 
   q.submit([&](sycl::handler &h) {
     h.single_task<class LoadA>([=]() [[intel::kernel_args_restrict]] {
@@ -111,6 +111,7 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
 
   auto event = q.submit([&](sycl::handler &h) {
     h.single_task<class spmv_dynamic>([=]() [[intel::kernel_args_restrict]] {
+      int total_req_stores = 0;
       for (int k = 1; k < M; k++) {
         for (int p = 0; p < M; p++) {
           auto load_x_1 = val_ld_pipes::PipeAt<0>::read(); // matrix[(k - 1) * M + col[p]];
@@ -120,10 +121,11 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
           auto store_x = load_x_2 + load_a * load_x_1;
 
           val_st_pipe::write(store_x);
+          total_req_stores++;
         }
       }
 
-      end_storeq_signal_pipe::write(1);
+      end_storeq_signal_pipe::write(total_req_stores);
       PRINTF("done\n");
     });
   });

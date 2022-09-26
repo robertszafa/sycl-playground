@@ -46,7 +46,7 @@ double histogram_if_kernel(queue &q, const std::vector<int> &h_feature,
   using weight_load_3_pipe = pipe<class weight_load_3_pipe_class, uint, 64>;
 
   using calc_predicate_pipe = pipe<class calc_predicate_pipe_class, bool, 64>;
-  using end_storeq_signal_pipe = pipe<class end_signal_pipe_class, bool>;
+  using end_storeq_signal_pipe = pipe<class end_signal_pipe_class, int>;
 
   q.submit([&](handler &hnd) {
     hnd.single_task<class LoadWeight>([=]() [[intel::kernel_args_restrict]] {
@@ -89,15 +89,17 @@ double histogram_if_kernel(queue &q, const std::vector<int> &h_feature,
 
   auto event = q.submit([&](handler &hnd) {
     hnd.single_task<class Compute>([=]() [[intel::kernel_args_restrict]] {
+      int total_req_stores = 0;
       while (calc_predicate_pipe::read()) {
         uint wt = weight_load_pipe::read();
         uint hist = val_ld_pipes::PipeAt<0>::read();
 
         auto new_hist = hist + wt;
         val_st_pipe::write(new_hist);
+        total_req_stores++;
       }
 
-      end_storeq_signal_pipe::write(0);
+      end_storeq_signal_pipe::write(total_req_stores);
     });
   });
 

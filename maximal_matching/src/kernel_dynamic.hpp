@@ -52,7 +52,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::v
   using idx_st_pipe = pipe<class store_idx_pipe_class, pair, 64>;
   using val_st_pipe = pipe<class store_val_pipe_class, int, 64>;
 
-  using end_storeq_signal_pipe = pipe<class end_lsq_signal_pipe_class, bool>;
+  using end_storeq_signal_pipe = pipe<class end_lsq_signal_pipe_class, int>;
   
   using val_merge_pred_pipe = pipe<class val_merge_pred_class, bool, 64>;
 
@@ -125,6 +125,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::v
     hnd.single_task<class Calculation>([=]() [[intel::kernel_args_restrict]] {
       int i = 0;
       int out_res = 0;
+      int total_req_stores = 0;
       while (i < num_edges) {
 
         auto u = u_pipe::read();
@@ -139,7 +140,9 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::v
 
           val_merge_pred_pipe::write(1);
           u_store_val_pipe::write(v);
+          total_req_stores++;
           v_store_val_pipe::write(u);
+          total_req_stores++;
 
           out_res += 1;
         }
@@ -153,7 +156,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::v
       }
 
       val_merge_pred_pipe::write(0);
-      end_storeq_signal_pipe::write(1);
+      end_storeq_signal_pipe::write(total_req_stores);
 
       *out = out_res;
     });
