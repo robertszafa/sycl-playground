@@ -72,6 +72,8 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
       int i_store_idx = 0;
       // How many store values were accepted from st_val pipe.
       int i_store_val = 0;
+      // How many stores have committed to memory
+      int i_committed_stores = 0;
       // Total number of stores to commit (supplied by the end_signal).
       int total_req_stores = 0;
       // Pointers into the store_entries circular buffer. Tail is for values, Head for idxs.
@@ -104,7 +106,7 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
       bool end_signal = false;
 
       [[intel::ivdep]] 
-      while (!end_signal || (i_store_val < total_req_stores)) {
+      while (!end_signal || i_committed_stores < total_req_stores) {
         /* Start Load  Logic */
         // All loads can proceed in parallel. The below unrolls the template PipeArray/NTuple. 
         UnrolledLoop<num_lds>([&](auto k) {
@@ -118,8 +120,8 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
           auto& is_load_rq_finished = is_load_rq_finished_tp. template get<k>();
 
           // Check for new ld requests.
-          bool idx_load_pipe_succ = false;
           if (is_load_rq_finished) {
+            bool idx_load_pipe_succ = false;
             idx_tag_pair_load = ld_idx_pipes:: template PipeAt<k>::read(idx_load_pipe_succ);
 
             if (idx_load_pipe_succ) {
@@ -127,10 +129,11 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
               is_load_rq_finished = false;
               idx_load = idx_tag_pair_load.first;
               tag_load = idx_tag_pair_load.second;
+              // PRINTF("  idx_load = %d, tag_load = %d\n", idx_load, tag_load);
             }
           }
 
-          if (consumer_load_succ || is_load_waiting) {
+          if (!is_load_rq_finished && (consumer_load_succ || is_load_waiting)) {
             is_load_waiting = (tag_load > tag_store);
             
             if constexpr (FORWARD) {
@@ -171,6 +174,8 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
             // The rq is deemed finished once the consumer pipe has been successfully written.
             ld_val_pipes:: template PipeAt<k>::write(val_load, consumer_load_succ);
             is_load_rq_finished = consumer_load_succ;
+
+            // if (consumer_load_succ) PRINTF("  %d: val_load = %f\n", consumer_load_succ, val_load);
           }
         }); 
         /* End Load Logic */
@@ -179,9 +184,13 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
         /* Start Store 1 Logic */
         bool is_space_in_stq = (store_entries[stq_head].idx == -1);
         #pragma unroll
-        for (storeq_idx_t i=0; i<QUEUE_SIZE; ++i) {
-          // Decrement count, or invalidate idexes if count goes below 0 on this iter.
-          if (store_entries[i].countdown <= int16_t(1) && !store_entries[i].waiting_for_val) 
+        for (storeq_idx_t i = 0; i < QUEUE_SIZE; ++i) {
+          if (store_entries[i].countdown < int16_t(1) && !store_entries[i].waiting_for_val &&
+              store_entries[i].idx != -1)
+            i_committed_stores++;
+
+          // Invalidate idx if count WILL GO to 0 on this iter.
+          if (store_entries[i].countdown < int16_t(1) && !store_entries[i].waiting_for_val) 
             store_entries[i].idx = -1;
           else 
             store_entries[i].countdown--;
@@ -195,6 +204,8 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
           if (idx_store_pipe_succ) {
             idx_store = idx_tag_pair_store.first;
             tag_store = idx_tag_pair_store.second;
+
+            // PRINTF("  idx_store = %d, tag_store = %d\n", idx_store, tag_store);
 
             // Requests with idx_store=-1 are only sent to update the store tag 
             // (this is to deal with conditional stores that don't always occur).
@@ -213,12 +224,12 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
           val_store = st_val_pipe::read(val_store_pipe_succ);
 
           if (val_store_pipe_succ) {
-
             PipelinedLSU::store(data + store_entries[stq_tail].idx, val_store);
             store_entries[stq_tail].waiting_for_val = false;
             store_entries[stq_tail].countdown = int16_t(ST_LATENCY);
             if constexpr (FORWARD) store_entries_val[stq_tail] = val_store;
 
+            // PRINTF("val_store = %f\n", val_store);
             i_store_val++;
             stq_tail = (stq_tail+1) % QUEUE_SIZE;
           }
@@ -232,6 +243,10 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
         }
         
       }
+
+      // PRINTF("stq_head == stq_tail = %d\n", stq_head == stq_tail);
+      // PRINTF("stq_tail = %d\n", stq_tail);
+      // PRINTF("Done Store Queue\n");
     });
   });
 
