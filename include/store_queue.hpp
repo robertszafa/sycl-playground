@@ -1,4 +1,9 @@
-/// Generic Store Queue 
+/*
+Robert Szafarczyk, Glasgow, 2022
+
+Memory disambiguation kernel for C/C++/OpenCL/SYCL based HLS.
+Store queue with early execution of loads when all preceding stores have calculated their addresses.
+*/
 
 #ifndef __STORE_QUEUE_HPP__
 #define __STORE_QUEUE_HPP__
@@ -40,15 +45,17 @@ using PipelinedLSU = ext::intel::lsu<>;
 // Forward declaration to avoid name mangling.
 class StoreQueueKernel;
 
-struct pair {
-  int first;
-  int second;
-};
+/// Used for {idx, tag} pairs.
+struct pair_t { int first; int second; };
+
+/// Used for store value pairs which could not be valid.
+template<typename T>
+struct value_predicated_t { bool valid; T value; };
 
 template <typename ld_idx_pipes, typename ld_val_pipes, int num_lds,
           typename st_idx_pipe, typename st_val_pipe, typename end_signal_pipe, 
-          bool FORWARD=true, int QUEUE_SIZE=8, int ST_LATENCY=12, typename T_val>
-event StoreQueue(queue &q, device_ptr<T_val> data) {
+          bool FORWARD=true, int QUEUE_SIZE=8, int ST_LATENCY=12, typename value_t>
+event StoreQueue(queue &q, device_ptr<value_t> data) {
 
   constexpr int kQueueLoopIterBitSize = fpga_tools::BitsForMaxValue<QUEUE_SIZE+1>();
   using storeq_idx_t = ac_int<kQueueLoopIterBitSize, false>;
@@ -62,40 +69,36 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
 
   auto event = q.submit([&](handler &hnd) {
     hnd.single_task<StoreQueueKernel>([=]() [[intel::kernel_args_restrict]] {
+      /// The store queue is a circular buffer.
       [[intel::fpga_register]] store_entry store_entries[QUEUE_SIZE];
-      [[intel::fpga_register]] T_val store_entries_val[QUEUE_SIZE];
+      [[intel::fpga_register]] value_t store_entries_val[QUEUE_SIZE];
 
+      // Start with no valid entries in store queue.
       #pragma unroll
-      for (uint i=0; i<QUEUE_SIZE; ++i) store_entries[i] = {-1};
+      for (uint i=0; i<QUEUE_SIZE; ++i) 
+        store_entries[i] = {-1};
 
+      // The below are variables kept around across iterations.
+      bool end_signal = false;
       // How many store (valid) indexes were read from st_idx pipe.
       int i_store_idx = 0;
       // How many store values were accepted from st_val pipe.
       int i_store_val = 0;
-      // How many stores have committed to memory
-      int i_committed_stores = 0;
       // Total number of stores to commit (supplied by the end_signal).
       int total_req_stores = 0;
       // Pointers into the store_entries circular buffer. Tail is for values, Head for idxs.
       storeq_idx_t stq_tail = 0;
       storeq_idx_t stq_head = 0;
-
       int tag_store = 0;
-      int idx_store;
-      T_val val_store;
-      pair idx_tag_pair_store;
 
-      // TODO: to be more general, the initial load tags should be a template arg coming
-      //       from program analysis: i.e. tags should reflect program order.
-      // Scalar book-keeping values, one per load (NTuple is expanded at compile time).
-      NTuple<T_val, num_lds> val_load_tp;
-      NTuple<pair, num_lds> idx_tag_pair_load_tp;
+      // Scalar book-keeping values for the load logic (one per load, NTuple expanded at compile).
+      NTuple<value_t, num_lds> val_load_tp;
+      NTuple<pair_t, num_lds> idx_tag_pair_load_tp;
       NTuple<int, num_lds> idx_load_tp;
       NTuple<int, num_lds> tag_load_tp;
       NTuple<bool, num_lds> consumer_load_succ_tp;
       NTuple<bool, num_lds> is_load_waiting_tp;
       NTuple<bool, num_lds> is_load_rq_finished_tp;
-
       UnrolledLoop<num_lds>([&](auto k) {
         consumer_load_succ_tp. template get<k>() = true;
         tag_load_tp. template get<k>() = 0;
@@ -103,11 +106,10 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
         is_load_rq_finished_tp. template get<k>() = true;
       });
 
-      bool end_signal = false;
 
       [[intel::ivdep]] 
-      while (!end_signal || i_committed_stores < total_req_stores) {
-        /* Start Load  Logic */
+      while (!end_signal || (i_store_val+1) < total_req_stores) {
+        /* Start Load Logic */
         // All loads can proceed in parallel. The below unrolls the template PipeArray/NTuple. 
         UnrolledLoop<num_lds>([&](auto k) {
           // Use shorter names.
@@ -115,33 +117,35 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
           auto& idx_tag_pair_load = idx_tag_pair_load_tp. template get<k>();
           auto& idx_load = idx_load_tp. template get<k>();
           auto& tag_load = tag_load_tp. template get<k>();
-          auto& consumer_load_succ = consumer_load_succ_tp. template get<k>();
+          auto& consumer_pipe_succ = consumer_load_succ_tp. template get<k>();
           auto& is_load_waiting = is_load_waiting_tp. template get<k>();
           auto& is_load_rq_finished = is_load_rq_finished_tp. template get<k>();
 
-          // Check for new ld requests.
+          // Check for new ld requests, only once the prev one was completed.
           if (is_load_rq_finished) {
             bool idx_load_pipe_succ = false;
             idx_tag_pair_load = ld_idx_pipes:: template PipeAt<k>::read(idx_load_pipe_succ);
 
             if (idx_load_pipe_succ) {
-              // Don't check this load port until the rq is served.
               is_load_rq_finished = false;
               idx_load = idx_tag_pair_load.first;
               tag_load = idx_tag_pair_load.second;
-              // PRINTF("  idx_load = %d, tag_load = %d\n", idx_load, tag_load);
             }
           }
 
-          if (!is_load_rq_finished && (consumer_load_succ || is_load_waiting)) {
+          if (!is_load_rq_finished) {
+            // If the load tag sequence has overtaken the store tags, then we cannot possibly
+            // disambiguate -- need to wait for more store idxs to arrive. 
             is_load_waiting = (tag_load > tag_store);
-            
-            if constexpr (FORWARD) {
-              // If found, make sure it's the youngest store occuring before this ld
-              // by finding the store with the max_tag, such that max_tag <= this_ld_tag
-              int max_tag = -1; 
+            int max_tag = -1; 
+
+            // Forwarding version searches the queue and passess value to requesting load 
+            // if found, without issuing a memory load.
+            if constexpr (FORWARD) { 
               #pragma unroll
-              for (uint i=0; i<QUEUE_SIZE; ++i) {
+              for (storeq_idx_t i=0; i<QUEUE_SIZE; ++i) {
+                // If found, make sure it's the youngest store occuring before this ld
+                // by finding the store with the max_tag, such that max_tag <= this_ld_tag
                 auto st_entry = store_entries[i];
                 if (st_entry.idx == idx_load && st_entry.tag <= tag_load && st_entry.tag > max_tag) {
                   is_load_waiting |= st_entry.waiting_for_val;
@@ -150,46 +154,37 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
                 }
               }
 
-              if (!is_load_waiting && max_tag == -1) {
+              // If true, this means that the requested idx is not in the store queue.  
+              // Else, val_load would have been assigned in the search loop above.
+              if (!is_load_waiting && max_tag == -1) 
                 val_load = PipelinedLSU::load(data + idx_load);
-              }
-            }
-            else {
-              int max_tag = -1; 
+            } else {
               #pragma unroll
-              for (storeq_idx_t i=0; i<QUEUE_SIZE; ++i) {
+              for (storeq_idx_t i=0; i<QUEUE_SIZE; ++i) 
                 is_load_waiting |= (store_entries[i].idx == idx_load && store_entries[i].tag <= tag_load);
-              }
 
-              if (!is_load_waiting) {
+              if (!is_load_waiting) 
                 val_load = PipelinedLSU::load(data + idx_load);
-              }
             }
 
-            // Setting 'consumer_load_succ' to false forces a write to load consumer pipe.
-            consumer_load_succ = is_load_waiting;
+            // Setting consumer_load_succ=false forces a write to load consumer pipe.
+            consumer_pipe_succ = is_load_waiting;
           }
 
-          if (!consumer_load_succ) {
-            // The rq is deemed finished once the consumer pipe has been successfully written.
-            ld_val_pipes:: template PipeAt<k>::write(val_load, consumer_load_succ);
-            is_load_rq_finished = consumer_load_succ;
-
-            // if (consumer_load_succ) PRINTF("  %d: val_load = %f\n", consumer_load_succ, val_load);
+          if (!consumer_pipe_succ) {
+            // The ld. req. is deemed finished once the consumer pipe has been successfully written.
+            ld_val_pipes:: template PipeAt<k>::write(val_load, consumer_pipe_succ);
+            is_load_rq_finished = consumer_pipe_succ;
           }
         }); 
         /* End Load Logic */
       
 
-        /* Start Store 1 Logic */
+        /* Start Store Logic */
         bool is_space_in_stq = (store_entries[stq_head].idx == -1);
         #pragma unroll
         for (storeq_idx_t i = 0; i < QUEUE_SIZE; ++i) {
-          if (store_entries[i].countdown < int16_t(1) && !store_entries[i].waiting_for_val &&
-              store_entries[i].idx != -1)
-            i_committed_stores++;
-
-          // Invalidate idx if count WILL GO to 0 on this iter.
+          // Invalidate idx if count WILL GO to 0 on this iteration.
           if (store_entries[i].countdown < int16_t(1) && !store_entries[i].waiting_for_val) 
             store_entries[i].idx = -1;
           else 
@@ -199,54 +194,47 @@ event StoreQueue(queue &q, device_ptr<T_val> data) {
         // If store_q not full, check for new store_idx requests.
         if (is_space_in_stq) {
           bool idx_store_pipe_succ = false;
-          idx_tag_pair_store = st_idx_pipe::read(idx_store_pipe_succ);
+          pair_t idx_tag_pair_store = st_idx_pipe::read(idx_store_pipe_succ);
 
           if (idx_store_pipe_succ) {
-            idx_store = idx_tag_pair_store.first;
+            int idx_store = idx_tag_pair_store.first;
             tag_store = idx_tag_pair_store.second;
+            store_entries[stq_head] = {idx_store, tag_store, true};
 
-            // PRINTF("  idx_store = %d, tag_store = %d\n", idx_store, tag_store);
-
-            // Requests with idx_store=-1 are only sent to update the store tag 
-            // (this is to deal with conditional stores that don't always occur).
-            if (idx_store != -1) {
-              store_entries[stq_head] = {idx_store, tag_store, true};
-
-              i_store_idx++;
-              stq_head = (stq_head+1) % QUEUE_SIZE;
-            }
+            i_store_idx++;
+            stq_head = (stq_head+1) % QUEUE_SIZE;
           }
         }
-        
-        // If we have read more store indexes than store values, then check for new store_vals.
+
+        // Only check for store values, once their corresponding index has been received.
         if (i_store_idx > i_store_val) {
           bool val_store_pipe_succ = false;
-          val_store = st_val_pipe::read(val_store_pipe_succ);
+          value_predicated_t<value_t> st_value_pred = st_val_pipe::read(val_store_pipe_succ);
 
           if (val_store_pipe_succ) {
-            PipelinedLSU::store(data + store_entries[stq_tail].idx, val_store);
-            store_entries[stq_tail].waiting_for_val = false;
-            store_entries[stq_tail].countdown = int16_t(ST_LATENCY);
-            if constexpr (FORWARD) store_entries_val[stq_tail] = val_store;
+            // Only issue store if the value is valid, otherwise invalidate the corresponding entry.
+            if (st_value_pred.valid) {
+              if constexpr (FORWARD)
+                store_entries_val[stq_tail] = st_value_pred.value;
 
-            // PRINTF("val_store = %f\n", val_store);
+              PipelinedLSU::store(data + store_entries[stq_tail].idx, st_value_pred.value);
+              store_entries[stq_tail].countdown = int16_t(ST_LATENCY);
+            } else {
+              store_entries[stq_tail].idx = -1;
+            }
+
+            store_entries[stq_tail].waiting_for_val = false;
             i_store_val++;
-            stq_tail = (stq_tail+1) % QUEUE_SIZE;
+            stq_tail = (stq_tail + 1) % QUEUE_SIZE;
           }
         }
-        /* End Store 1 Logic */
-      
-        // The end signal supplies the total number of stores that need to be 
-        // committed before terminating the store queue logic.
-        if (!end_signal) {
+        /* End Store Logic */
+
+        // The end signal supplies the total number of stores supplied to the store queue.
+        if (!end_signal)
           total_req_stores = end_signal_pipe::read(end_signal);
-        }
-        
       }
 
-      // PRINTF("stq_head == stq_tail = %d\n", stq_head == stq_tail);
-      // PRINTF("stq_tail = %d\n", stq_tail);
-      // PRINTF("Done Store Queue\n");
     });
   });
 
