@@ -40,9 +40,9 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
 
   constexpr int kNumStoreOps = 1;
   constexpr int kNumLdPipes = 2;
-  using idx_ld_pipes = PipeArray<class idx_ld_pipes_class, pair, 64, kNumLdPipes>;
+  using idx_ld_pipes = PipeArray<class idx_ld_pipes_class, pair_t, 64, kNumLdPipes>;
   using val_ld_pipes = PipeArray<class val_ld_pipes_class, float, 64, kNumLdPipes>;
-  using idx_st_pipe = pipe<class idx_store_pipe_class, pair, 64>;
+  using idx_st_pipe = pipe<class idx_store_pipe_class, pair_t, 64>;
   using val_st_pipe = pipe<class val_store_pipe_class, float, 64>;
 
   using ld_a_pipe = pipe<class ld_a_class, float, 64>;
@@ -56,7 +56,6 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
           ld_a_pipe::write(a[p]);
         }
       }
-      PRINTF("done load a\n");
     });
   });
 
@@ -71,7 +70,6 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
           tag++;
         }
       }
-      PRINTF("done loadidxs 0\n");
     });
   });
 
@@ -102,7 +100,6 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
         }
       }
 
-      PRINTF("done storeidxs\n");
     });
   });
 
@@ -126,7 +123,6 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
       }
 
       end_storeq_signal_pipe::write(total_req_stores);
-      PRINTF("done\n");
     });
   });
 

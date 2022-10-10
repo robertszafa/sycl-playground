@@ -41,9 +41,9 @@ double get_tanh_kernel(queue &q, std::vector<int> &h_A, const std::vector<int> h
   using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, int>;
 
   constexpr int kNumLdPipes = 1;
-  using idx_ld_pipes = PipeArray<class idx_ld_pipe_class, pair, 64, kNumLdPipes>;
+  using idx_ld_pipes = PipeArray<class idx_ld_pipe_class, pair_t, 64, kNumLdPipes>;
   using val_ld_pipes = PipeArray<class val_ld_pipe_class, int, 64, kNumLdPipes>;
-  using idx_st_pipe = pipe<class idx_st_pipe_class, pair, 64>;
+  using idx_st_pipe = pipe<class idx_st_pipe_class, pair_t, 64>;
   using val_st_pipe = pipe<class val_st_pipe_class, int, 64>;
 
 

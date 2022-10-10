@@ -36,22 +36,13 @@ double histogram_kernel(queue &q, const std::vector<int> &h_feature, const std::
   int* hist = toDevice(h_hist, q);
 
   constexpr int kNumLdPipes = 1;
-  using idx_ld_pipes = PipeArray<class feature_load_pipe_class, pair, 64, kNumLdPipes>;
+  using idx_ld_pipes = PipeArray<class feature_load_pipe_class, pair_t, 64, kNumLdPipes>;
   using val_ld_pipes = PipeArray<class hist_load_pipe_class, int, 64, kNumLdPipes>;
   using weight_load_pipe = pipe<class weight_load_pipe_class, int, 64>;
-  using idx_st_pipe = pipe<class feature_store_pipe_class, pair, 64>;
+  using idx_st_pipe = pipe<class feature_store_pipe_class, pair_t, 64>;
   using val_st_pipe = pipe<class hist_store_pipe_class, int, 64>;
 
   using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, int>;
-
-  q.submit([&](handler &hnd) {
-    hnd.single_task<class LoadWeight>([=]() [[intel::kernel_args_restrict]] {
-      for (int i = 0; i < array_size; ++i) {
-        int wt = weight[i];
-        weight_load_pipe::write(wt);
-      }
-    });
-  });
 
   constexpr int kNumStoreOps = 1;
   q.submit([&](handler &hnd) {
@@ -71,7 +62,7 @@ double histogram_kernel(queue &q, const std::vector<int> &h_feature, const std::
     hnd.single_task<class Compute>([=]() [[intel::kernel_args_restrict]] {
       int total_req_stores = 0;
       for (int i = 0; i < array_size; ++i) {
-        int wt = weight_load_pipe::read();
+        int wt = weight[i];
         int hist = val_ld_pipes::PipeAt<0>::read();
 
         auto new_hist = hist + wt;

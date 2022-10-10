@@ -48,9 +48,6 @@ class StoreQueueKernel;
 /// Used for {idx, tag} pairs.
 struct pair_t { int first; int second; };
 
-/// Used for store value pairs which could not be valid.
-template<typename T>
-struct value_predicated_t { bool valid; T value; };
 
 template <typename ld_idx_pipes, typename ld_val_pipes, int num_lds,
           typename st_idx_pipe, typename st_val_pipe, typename end_signal_pipe, 
@@ -199,31 +196,30 @@ event StoreQueue(queue &q, device_ptr<value_t> data) {
           if (idx_store_pipe_succ) {
             int idx_store = idx_tag_pair_store.first;
             tag_store = idx_tag_pair_store.second;
-            store_entries[stq_head] = {idx_store, tag_store, true};
 
-            i_store_idx++;
-            stq_head = (stq_head+1) % QUEUE_SIZE;
+            // A "-1" address means that the corresponding store is control dependent and should not
+            // be issued. However, we update the tag_store, so that dependent loads can proceed.
+            if (idx_store != -1) {
+              store_entries[stq_head] = {idx_store, tag_store, true};
+
+              i_store_idx++;
+              stq_head = (stq_head+1) % QUEUE_SIZE;
+            }
           }
         }
 
         // Only check for store values, once their corresponding index has been received.
         if (i_store_idx > i_store_val) {
           bool val_store_pipe_succ = false;
-          value_predicated_t<value_t> st_value_pred = st_val_pipe::read(val_store_pipe_succ);
+          value_t val_store = st_val_pipe::read(val_store_pipe_succ);
 
           if (val_store_pipe_succ) {
-            // Only issue store if the value is valid, otherwise invalidate the corresponding entry.
-            if (st_value_pred.valid) {
-              if constexpr (FORWARD)
-                store_entries_val[stq_tail] = st_value_pred.value;
-
-              PipelinedLSU::store(data + store_entries[stq_tail].idx, st_value_pred.value);
-              store_entries[stq_tail].countdown = int16_t(ST_LATENCY);
-            } else {
-              store_entries[stq_tail].idx = -1;
-            }
-
+            PipelinedLSU::store(data + store_entries[stq_tail].idx, val_store);
             store_entries[stq_tail].waiting_for_val = false;
+            store_entries[stq_tail].countdown = int16_t(ST_LATENCY);
+            if constexpr (FORWARD)
+              store_entries_val[stq_tail] = val_store;
+
             i_store_val++;
             stq_tail = (stq_tail + 1) % QUEUE_SIZE;
           }
