@@ -104,6 +104,11 @@ event StoreQueue(queue &q, device_ptr<value_t> data) {
       });
 
 
+      // Setting Inititation Interval to the number of store_q entries ensures that we are not
+      // increasing the critical path of the resulting circuit by too much, or not at all in most 
+      // cases. 
+      // ivdep (ignore mem dependencies): The logic guarantees dependencies are honoured.
+      [[intel::initiation_interval(QUEUE_SIZE)]] // 
       [[intel::ivdep]] 
       while (!end_signal || (i_store_val+1) < total_req_stores) {
         /* Start Load Logic */
@@ -214,12 +219,13 @@ event StoreQueue(queue &q, device_ptr<value_t> data) {
           value_t val_store = st_val_pipe::read(val_store_pipe_succ);
 
           if (val_store_pipe_succ) {
-            PipelinedLSU::store(data + store_entries[stq_tail].idx, val_store);
-            store_entries[stq_tail].waiting_for_val = false;
-            store_entries[stq_tail].countdown = int16_t(ST_LATENCY);
             if constexpr (FORWARD)
               store_entries_val[stq_tail] = val_store;
 
+            store_entries[stq_tail].waiting_for_val = false;
+            PipelinedLSU::store(data + store_entries[stq_tail].idx, val_store);
+            store_entries[stq_tail].countdown = int16_t(ST_LATENCY);
+            
             i_store_val++;
             stq_tail = (stq_tail + 1) % QUEUE_SIZE;
           }
