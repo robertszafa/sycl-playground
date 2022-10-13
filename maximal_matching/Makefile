@@ -30,6 +30,7 @@ endif
 CXX := dpcpp
 CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched -DQ_SIZE=$(Q_SIZE) -I$(INC)
 CXXFLAGS += -qactypes
+CXXFLAGS += -Xsboard=/opt/intel/oneapi/intel_a10gx_pac:pac_a10
 # CXXFLAGS += -Xsprofile
 # CXXFLAGS += -g
 # CXXFLAGS += -Xsghdl
