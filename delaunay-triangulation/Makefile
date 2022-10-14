@@ -39,7 +39,7 @@ all: host
 host: $(BIN)
 fpga_emu: $(BIN).fpga_emu
 fpga_sim: $(BIN).fpga_sim
-fpga_hw: $(BIN).fpga
+fpga_hw: $(BIN).fpga_hw
 report: $(BIN).a 
 
 
