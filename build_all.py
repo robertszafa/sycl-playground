@@ -35,7 +35,3 @@ if __name__ == '__main__':
 
         for q_size in Q_SIZES_DYNAMIC:
           run_make(kernel, build_make_string(TARGET, kernel='dynamic', q_size=q_size))
-
-        for q_size in Q_SIZES_DYNAMIC:
-          run_make(kernel, build_make_string(TARGET, kernel='dynamic_no_forward', q_size=q_size))
-
