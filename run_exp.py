@@ -61,10 +61,11 @@ if __name__ == '__main__':
         exit("ERROR: No extension provided\nUSAGE: ./build_all.py [emu, sim, hw]\n")
 
     is_sim = 'sim' == sys.argv[1]
+    is_emu = 'emu' == sys.argv[1]
     bin_ext = 'fpga_' + sys.argv[1]
-    KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
-    SUB_DIR = 'simulation' if is_sim else 'hardware' 
-    SUB_DIR = SUB_DIR if 'emu' != sys.argv[1] else '/tmp' 
+    SUB_DIR = sys.argv[1]
+    if is_sim or is_emu:
+        KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM
 
     for kernel in KERNELS:
         if not kernel in KERNEL_ASIZE_PAIRS.keys():
@@ -80,11 +81,10 @@ if __name__ == '__main__':
 
             with open(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{distr_name}.csv', 'w') as f:
                 writer = csv.writer(f)
-                writer.writerow(['q_size', 'static', 'dynamic', 'dynamic_no_forward'])
+                writer.writerow(['q_size', 'static', 'dynamic'])
                 
                 static_time = 0
                 dyn_time = 0
-                dyn_no_forward_time = 0
 
                 static_time = run_bin(f'{kernel}/bin/{kernel}_static.{bin_ext}', 
                                       a_size, distr=distr_idx)
@@ -93,17 +93,15 @@ if __name__ == '__main__':
                     dyn_time = run_bin(f'{kernel}/bin/{kernel}_dynamic_{q_size}qsize.{bin_ext}', 
                                         a_size, distr=distr_idx)
 
-                    dyn_no_forward_time = run_bin(f'{kernel}/bin/{kernel}_dynamic_no_forward_{q_size}qsize.{bin_ext}', 
-                                                    a_size, distr=distr_idx)
-
                     new_row = []
                     new_row.append(q_size)
                     new_row.append(static_time)
                     new_row.append(dyn_time)
-                    new_row.append(dyn_no_forward_time)
                     writer.writerow(new_row)
+            
+            # Emulation times are meaningless.
+            if is_emu:
+                os.system(f'rm -r {EXP_DATA_DIR}/{kernel}/{SUB_DIR}')
         
 
     os.system(f'rm {TMP_FILE}')
-
-
