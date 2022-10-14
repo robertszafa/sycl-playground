@@ -9,7 +9,7 @@ CXXFLAGS += -std=c++17 -O2 -D$(KERNEL)_sched
 
 SRC := src/main.cpp
 HDR := src/kernel_$(KERNEL).hpp
-BIN := bin/if_mul_$(KERNEL)
+BIN := bin/kmeans_$(KERNEL)
 
 .PHONY: host fpga_emu fpga 
 

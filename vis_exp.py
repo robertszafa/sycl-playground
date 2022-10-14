@@ -179,11 +179,15 @@ def make_plot_all_percentages(filename, kernel, relative=False, y_label='Speedup
 
 
 if __name__ == '__main__':
-    is_sim = any('sim' in arg for arg in sys.argv[1:])
+    if sys.argv[1] not in ['emu', 'sim', 'hw']:
+        exit("ERROR: No extension provided\nUSAGE: ./build_all.py [emu, sim, hw]\n")
 
-    SUB_DIR = 'simulation' if is_sim else 'hardware'
-    BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
+    is_sim = 'sim' == sys.argv[1]
+    bin_ext = 'fpga_' + sys.argv[1]
     KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
+    SUB_DIR = 'simulation' if is_sim else 'hardware' 
+    SUB_DIR = SUB_DIR if 'emu' != sys.argv[1] else '/tmp' 
+
     Y_LABEL = 'Cycles' if is_sim else 'Time'
 
     for kernel in KERNEL_ASIZE_PAIRS.keys():
