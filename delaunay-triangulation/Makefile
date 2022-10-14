@@ -39,7 +39,7 @@ all: host
 host: $(BIN)
 fpga_emu: $(BIN).fpga_emu
 fpga_sim: $(BIN).fpga_sim
-fpga: $(BIN).fpga
+fpga_hw: $(BIN).fpga
 report: $(BIN).a 
 
 
@@ -52,7 +52,7 @@ $(BIN).fpga_emu: $(SRC) $(HDR) | bin
 $(BIN).fpga_sim: $(BIN).dev.o | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ $(SIMULATION_FLAGS)
 
-$(BIN).fpga: $(BIN).dev.o | bin
+$(BIN).fpga_hw: $(BIN).dev.o | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ $(HARDWARE_FLAGS)
 
 $(BIN).dev.o: $(SRC) $(HDR) | bin

@@ -84,7 +84,6 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
           tag++;
         }
       }
-      PRINTF("done loadidxs 1\n");
     });
   });
 

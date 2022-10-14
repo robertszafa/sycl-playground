@@ -19,7 +19,7 @@ all: host
 host: $(BIN)
 fpga_emu: $(BIN).fpga_emu
 fpga_sim: $(BIN).fpga_sim
-fpga: $(BIN).fpga
+fpga_hw: $(BIN).fpga
 report: $(BIN).a 
 
 
@@ -33,7 +33,7 @@ $(BIN).fpga_sim: $(SRC) $(HDR) | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga -Xssimulation $< -o $@ -DFPGA=1
 
 # To reuse fpga image add: -reuse-exe=$(BIN).fpga
-$(BIN).fpga: $(BIN).dev.o | bin
+$(BIN).fpga_hw: $(BIN).dev.o | bin
 	$(CXX) $(CXXFLAGS) -fintelfpga $< -o $@ -Xshardware
 
 $(BIN).dev.o: $(SRC) $(HDR) | bin

@@ -80,7 +80,7 @@ def annotate_difference(resources_base, resources_new):
 
 
 if __name__ == '__main__':
-    BIN_EXTENSION = 'fpga'
+    BIN_EXTENSION = 'fpga_hw'
     SUB_DIR = 'hardware'
 
     for kernel in KERNEL_ASIZE_PAIRS.keys():
