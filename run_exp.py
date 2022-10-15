@@ -88,7 +88,7 @@ if __name__ == '__main__':
                 static_time = 0
                 dyn_time = 0
 
-                static_time = run_bin(f'{kernel}/bin/{kernel}_static.{bin_ext}', 
+                static_time = run_bin(f'{kernel}/bin/{kernel}_static.fpga', 
                                       a_size, distr=distr_idx)
 
                 for i, q_size in enumerate(Q_SIZES_DYNAMIC):

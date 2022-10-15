@@ -31,7 +31,7 @@ if __name__ == '__main__':
     for kernel in KERNELS:
         print('Building for kernel:', kernel)
 
-        run_make(kernel, build_make_string(TARGET, kernel='static'))
+        # run_make(kernel, build_make_string(TARGET, kernel='static'))
 
         for q_size in Q_SIZES_DYNAMIC:
           run_make(kernel, build_make_string(TARGET, kernel='dynamic', q_size=q_size))

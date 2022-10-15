@@ -6,10 +6,9 @@ import numpy as np
 from pathlib import Path
 
 # Keep parameters synced
-from run_exp import (EXP_DATA_DIR, Q_SIZES_DYNAMIC, Q_SIZES_DYNAMIC_NO_FORWARD, DATA_DISTRIBUTIONS,
-                     KERNEL_ASIZE_PAIRS, KERNEL_ASIZE_PAIRS_SIM, PERCENTAGE_WAIT)
-from run_exp_all_percentages import (CSV_PERCENTAGES_RES_FILE, PERCENTAGES_WAIT, BEST_Q_SIZES_DYNAMIC, 
-                                     BEST_Q_SIZES_DYNAMIC_NO_FORWARD)
+from run_exp import (EXP_DATA_DIR, Q_SIZES_DYNAMIC, DATA_DISTRIBUTIONS,
+                     KERNEL_ASIZE_PAIRS, KERNEL_ASIZE_PAIRS_SIM)
+from run_exp_all_percentages import (CSV_PERCENTAGES_RES_FILE, PERCENTAGES_WAIT, BEST_Q_SIZES_DYNAMIC)
 
 plt.rcParams['font.size'] = 14
 # colors = seaborn.color_palette("rocket", 3)
@@ -51,7 +50,6 @@ def make_plot(filename, relative=True, y_label='Speedup (normalised)', title='')
     global fig_id
     global BINS_STATIC
     global BINS_DYNAMIC
-    global BINS_DYNAMIC_NO_FORWARD
 
     fig_id = fig_id + 1
 
@@ -61,19 +59,14 @@ def make_plot(filename, relative=True, y_label='Speedup (normalised)', title='')
 
     x2 = df['q_size']
     y2 = df['dynamic'].replace({0: np.nan})
-    x3 = df['q_size']
-    y3 = df['dynamic_no_forward'].replace({0: np.nan})
 
     if relative:
         static_baseline = y[0]
         y = [1 for _ in df['static']]
         y2 = [static_baseline/val for val in y2]
-        y3 = [static_baseline/val for val in y3]
 
     # plot
     fig = plt.figure(fig_id, figsize=(8, 8))
-    plt.semilogx(x3, y3, linestyle='-', marker='^', label='dynamic (no forwarding)',
-                 color=colors[2], mfc='w', markersize=8)
     plt.semilogx(x2, y2, linestyle='-', marker='s', label='dynamic (forwarding)',
                  color=colors[1], mfc='w', markersize=8)
     plt.semilogx(x, y, linestyle='-', marker='o', label='static',
@@ -91,13 +84,8 @@ def make_plot(filename, relative=True, y_label='Speedup (normalised)', title='')
             if not np.isnan(y2[i]):
                 plt.text(x2[i], y2[i], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic')
 
-        for i in range(len(BINS_DYNAMIC_NO_FORWARD)):
-            freq = get_freq(BINS_DYNAMIC_NO_FORWARD[i])
-            ii = get_ii(BINS_DYNAMIC_NO_FORWARD[i])
-            if not np.isnan(y3[i]):
-                plt.text(x3[i], y3[i], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic') 
 
-    xticks = Q_SIZES_DYNAMIC_NO_FORWARD
+    xticks = Q_SIZES_DYNAMIC
     plt.xticks(ticks=xticks, labels=xticks)
 
     plt.xlabel(r'Queue size', fontsize=14)
@@ -114,7 +102,6 @@ def make_plot_all_percentages(filename, kernel, relative=False, y_label='Speedup
     global fig_id
     global BINS_STATIC
     global BINS_DYNAMIC
-    global BINS_DYNAMIC_NO_FORWARD
 
     fig_id = fig_id + 1
 
@@ -124,8 +111,6 @@ def make_plot_all_percentages(filename, kernel, relative=False, y_label='Speedup
 
     x2 = df['percentage']
     y2 = df[f'dynamic (q_size {BEST_Q_SIZES_DYNAMIC[kernel]})'].replace({0: np.nan})
-    x3 = df['percentage']
-    y3 = df[f'dynamic_no_forward (q_size {BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]})'].replace({0: np.nan})
 
     if relative:
         y2 = [y[k]/val for k, val in enumerate(y2)]
@@ -134,9 +119,6 @@ def make_plot_all_percentages(filename, kernel, relative=False, y_label='Speedup
 
     # plot
     fig = plt.figure(fig_id, figsize=(8, 8))
-    plt.plot(x3, y3, linestyle='-', marker='^', 
-                 label=f'dynamic (no forwarding, q_size {BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]})',
-                 color=colors[2], mfc='w', markersize=8)
     plt.plot(x2, y2, linestyle='-', marker='s', 
                  label=f'dynamic (forwarding, q_size {BEST_Q_SIZES_DYNAMIC[kernel]})',
                  color=colors[1], mfc='w', markersize=8)
@@ -154,12 +136,6 @@ def make_plot_all_percentages(filename, kernel, relative=False, y_label='Speedup
                 freq = get_freq(BINS_DYNAMIC[i])
                 ii = get_ii(BINS_DYNAMIC[i])
                 plt.text(x2[len(x2) - 1], y2[len(y2) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic')
-
-        for i in range(len(BINS_DYNAMIC_NO_FORWARD)):
-            if Q_SIZES_DYNAMIC_NO_FORWARD[i] == BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]:
-                freq = get_freq(BINS_DYNAMIC_NO_FORWARD[i])
-                ii = get_ii(BINS_DYNAMIC_NO_FORWARD[i])
-                plt.text(x3[len(x3) - 1], y3[len(y3) - 1], f'{freq} MHz\nII={ii}', fontsize='x-small', fontstyle='italic') 
 
     xticks = PERCENTAGES_WAIT
     plt.xticks(ticks=xticks, labels=xticks)
@@ -185,26 +161,23 @@ if __name__ == '__main__':
     is_sim = 'sim' == sys.argv[1]
     bin_ext = 'fpga_' + sys.argv[1]
     KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
-    SUB_DIR = 'simulation' if is_sim else 'hardware' 
-    SUB_DIR = SUB_DIR if 'emu' != sys.argv[1] else '/tmp' 
+    SUB_DIR = sys.argv[1]
 
     Y_LABEL = 'Cycles' if is_sim else 'Time'
 
     for kernel in KERNEL_ASIZE_PAIRS.keys():
-        BINS_STATIC = [f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}']
-        BINS_DYNAMIC = [f'{kernel}/bin/{kernel}_dynamic_{s}qsize.{BIN_EXTENSION}' 
+        BINS_STATIC = [f'{kernel}/bin/{kernel}_static.fpga']
+        BINS_DYNAMIC = [f'{kernel}/bin/{kernel}_dynamic_{s}qsize.{bin_ext}' 
                         for s in Q_SIZES_DYNAMIC]
-        BINS_DYNAMIC_NO_FORWARD = [f'{kernel}/bin/{kernel}_dynamic_no_forward_{s}qsize.{BIN_EXTENSION}' 
-                                   for s in Q_SIZES_DYNAMIC_NO_FORWARD]
 
         # Ensure dir structure exists
         Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}').mkdir(parents=True, exist_ok=True)
         for distr_idx, distr_name in DATA_DISTRIBUTIONS.items():
             percentage_suffix = ''
             percentage_suffix_title = ''
-            if distr_idx == 2:
-                percentage_suffix = f'_{PERCENTAGE_WAIT}'
-                percentage_suffix_title = f'({PERCENTAGE_WAIT} %)'
+            # if distr_idx == 2:
+            #     percentage_suffix = f'_{PERCENTAGE_WAIT}'
+            #     percentage_suffix_title = f'({PERCENTAGE_WAIT} %)'
 
             csv_fname = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{distr_name}{percentage_suffix}.csv'
 
@@ -212,12 +185,12 @@ if __name__ == '__main__':
 
 
         ## Plot speedup vs. % data hazards
-        csv_file_all_percentages = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}'
-        if Path(csv_file_all_percentages).is_file():
-            make_plot_all_percentages(csv_file_all_percentages, kernel, y_label=Y_LABEL,
-                                    title='Performance at various levels of data hazards')
+        # csv_file_all_percentages = f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}'
+        # if Path(csv_file_all_percentages).is_file():
+        #     make_plot_all_percentages(csv_file_all_percentages, kernel, y_label=Y_LABEL,
+        #                             title='Performance at various levels of data hazards')
 
-            make_plot_all_percentages(csv_file_all_percentages, kernel, relative=True,
-                                    title='Speedup of Store Queue at various levels of data hazards')
+        #     make_plot_all_percentages(csv_file_all_percentages, kernel, relative=True,
+        #                             title='Speedup of Store Queue at various levels of data hazards')
 
 
