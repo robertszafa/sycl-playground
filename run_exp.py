@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import csv
+import time
 from pathlib import Path
 from build_all import Q_SIZES_DYNAMIC, KERNELS
 
@@ -28,7 +29,7 @@ DATA_DISTRIBUTIONS = {
     1: 'no_wait',
 }
 SIM_CYCLES_FILE = 'simulation_raw.json'
-TMP_FILE = '.tmp_run_exp.txt'
+TMP_FILE = f'.tmp_run_exp{str(time.time())[-5:]}.txt'
 
 
 def run_bin(bin, a_size, distr=0, percentage=0):
@@ -51,8 +52,9 @@ def run_bin(bin, a_size, distr=0, percentage=0):
     else: 
         # Get time
         match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
-        if (match):
-            print(f'{float(match.group(1))}')
+        if match:
+            if not  not 'emu' in bin:
+                print(f'{float(match.group(1))}')
             return float(match.group(1))
 
 
