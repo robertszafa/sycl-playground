@@ -2,97 +2,180 @@ import sys
 import os
 import re
 import csv
+import time
+from scipy.stats import gmean
 from pathlib import Path
-from run_exp import (EXP_DATA_DIR, KERNEL_ASIZE_PAIRS, KERNEL_ASIZE_PAIRS_SIM, 
-                     SIM_CYCLES_FILE, TMP_FILE)
+
+from build_all import KERNELS, Q_SIZES
 
 
-# Only run with the best Q_SIZE, otherwise there will be a lot of runs.
-BEST_Q_SIZES_DYNAMIC = {
-    'histogram' : 16,
-    'histogram_if' : 16,
-    'spmv' : 16,
-    'maximal_matching' : 16,
-    'get_tanh' : 16,
+EXP_DATA_DIR = 'exp_data/'
+SIM_CYCLES_FILE = 'simulation_raw.json'
+TMP_FILE = f'.tmp_run_exp{str(time.time())[-5:]}.txt'
+
+kernel_asize_pairs = {
+    'histogram' : 1000000,
+    'histogram_if' : 1000000,
+    'spmv' : 400,
+    'maximal_matching' : 1000000,
+    'get_tanh' : 1000000,
 }
-BEST_Q_SIZES_DYNAMIC_NO_FORWARD  = {
-    'histogram' : 32,   # 64 is actually better
-    'histogram_if' : 32,
-    'spmv' : 32,
-    'maximal_matching' : 32,
-    'get_tanh' : 32,
+# Decrease domain sizes when running in simulation.
+KERNEL_ASIZE_PAIRS_SIM = {
+    'histogram' : 1000,
+    'histogram_if' : 1000,
+    'spmv' : 20,
+    'maximal_matching' : 1000,
+    'get_tanh' : 1000,
+}
+# For info.
+DATA_DISTRIBUTIONS = {
+    0: 'all_wait',
+    1: 'no_wait',
+    2: 'percentage_wait',
 }
 
-DATA_DISTRIBUTION_KEY = 2
-DATA_DISTRIBUTION_NAME = 'percentage_wait'
 
-PERCENTAGES_WAIT = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-
-CSV_PERCENTAGES_RES_FILE = f'{DATA_DISTRIBUTION_NAME}.csv'
+PERCENTAGES_WAIT = [0, 40, 80, 100]
 
 
-def run_bin(bin, a_size, distr=2, percentage=0):
+def run_bin(bin, a_size, percentage=0):
     print(f'> {bin} : ', end='')
-    os.system(f'{bin} {a_size} {distr} {percentage} > {TMP_FILE}')
 
+    if percentage == 100: # all wait
+        bin_invoc = f'{bin} {a_size} 0'
+    elif percentage == 0: # no wait
+        bin_invoc = f'{bin} {a_size} 1'
+    else: # percentage wait
+        bin_invoc = f'{bin} {a_size} 2 {percentage}'
+
+    os.system(f'{bin_invoc} > {TMP_FILE}')
     stdout = ''
     with open(TMP_FILE, 'r') as f:
         stdout = str(f.read())
     if not 'Passed' in stdout:
-        print(f' - Fail in {bin} {a_size} {distr} {percentage}')
+        print(f'ERROR: Fail in {bin_invoc}\nOUTPUT:\n{stdout}')
     
     if 'fpga_sim' in bin: 
         # Get cycle count
         with open(SIM_CYCLES_FILE, 'r') as f:
             match = re.search(r'"time":"(\d+)"', f.read())
-        if (match):
+        if match:
             print(f'{int(match.group(1))}')
             return int(match.group(1))
     else: 
         # Get time
         match = re.search(r'Kernel time \(ms\): (\d+\.\d+|\d+)', stdout)
-        if (match):
+        if match:
             print(f'{float(match.group(1))}')
             return float(match.group(1))
+    
+    return 1
 
 
 if __name__ == '__main__':
-    is_sim = any('sim' in arg for arg in sys.argv[1:])
+    if sys.argv[1] not in ['emu', 'sim', 'hw']:
+        exit("ERROR: No extension provided\nUSAGE: ./build_all.py [emu, sim, hw]\n")
 
-    BIN_EXTENSION = 'fpga_sim' if is_sim else 'fpga'
-    SUB_DIR = 'simulation' if is_sim else 'hardware'
-    KERNEL_ASIZE_PAIRS = KERNEL_ASIZE_PAIRS_SIM if is_sim else KERNEL_ASIZE_PAIRS
+    bin_type = sys.argv[1]
+    bin_ext = 'fpga_' + bin_type
+    is_sim = 'sim' == bin_type
+    is_emu = 'emu' == bin_type
 
-    for kernel, a_size in KERNEL_ASIZE_PAIRS.items():
+    kernel_asize_pairs = KERNEL_ASIZE_PAIRS_SIM if is_sim or is_emu else kernel_asize_pairs
+
+    # Record lowest-, highest-, gmean-speedup against static across all kernels for every qsize.
+    lowest_speedup_all_kernels = {q : 1000 for q in Q_SIZES}
+    highest_speedup_all_kernels = {q : 0 for q in Q_SIZES}
+    gmean_speedup_all_kernels = {q : -1 for q in Q_SIZES}
+
+    for kernel in KERNELS:
+        if not kernel in kernel_asize_pairs.keys():
+            exit(f"ERROR: {kernel} not in KERNEL_ASIZE_PAIRS")
+        a_size = kernel_asize_pairs[kernel]
         print('Running kernel:', kernel)
 
-        BIN_STATIC = f'{kernel}/bin/{kernel}_static.{BIN_EXTENSION}'
-        BIN_DYNAMIC = f'{kernel}/bin/{kernel}_dynamic_{BEST_Q_SIZES_DYNAMIC[kernel]}qsize.{BIN_EXTENSION}' 
-        BIN_DYNAMIC_NO_FORWARD = f'{kernel}/bin/{kernel}_dynamic_no_forward_{BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]}qsize.{BIN_EXTENSION}' 
-
         # Ensure dir structure exists
-        Path(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}').mkdir(parents=True, exist_ok=True)
+        Path(f'{EXP_DATA_DIR}/').mkdir(parents=True, exist_ok=True)
+        res_file = f'{EXP_DATA_DIR}/{kernel}_{bin_type}.csv'
 
-        with open(f'{EXP_DATA_DIR}/{kernel}/{SUB_DIR}/{CSV_PERCENTAGES_RES_FILE}', 'w') as f:
+        with open(res_file, 'w') as f:
             writer = csv.writer(f)
-            writer.writerow(['percentage', 'static', 
-                                f'dynamic (q_size {BEST_Q_SIZES_DYNAMIC[kernel]})', 
-                                f'dynamic_no_forward (q_size {BEST_Q_SIZES_DYNAMIC_NO_FORWARD[kernel]})'])
+            writer.writerow(['percentage', 'static'] + [f'dynamic_{q}qsize)' for q in Q_SIZES])
+
+            # Record lowest-highest speedup against static across all % for each q_size.
+            lowest_speedup = {q : 100000 for q in Q_SIZES}
+            highest_speedup = {q : 0 for q in Q_SIZES}
+            all_speedups = {q : [] for q in Q_SIZES}
 
             for percentage in PERCENTAGES_WAIT:
-                print(f'Running with percentage_wait {percentage} %')
+                print(f'\nRunning with percentage_wait {percentage} %')
 
+                new_row = [percentage]
+
+                BIN_STATIC = f'{kernel}/bin/{kernel}_static.{bin_ext}'
                 static_time = run_bin(BIN_STATIC, a_size, percentage=percentage)
-                dyn_time = run_bin(BIN_DYNAMIC, a_size, percentage=percentage)
-                dyn_no_forward_time = run_bin(BIN_DYNAMIC_NO_FORWARD, a_size, percentage=percentage)
-
-                new_row = []
-                new_row.append(percentage)
                 new_row.append(static_time)
-                new_row.append(dyn_time)
-                new_row.append(dyn_no_forward_time)
+
+                for q in Q_SIZES:
+                    BIN_DYNAMIC = f'{kernel}/bin/{kernel}_dynamic_{q}qsize.{bin_ext}' 
+                    dyn_time = run_bin(BIN_DYNAMIC, a_size, percentage=percentage)
+                    new_row.append(dyn_time)
+
+                    this_perc_speedup = round(static_time / dyn_time, 2)
+                    all_speedups[q].append(this_perc_speedup)
+                    lowest_speedup[q] = min(this_perc_speedup, lowest_speedup[q])
+                    highest_speedup[q] = max(this_perc_speedup, highest_speedup[q])
 
                 writer.writerow(new_row)
+
+            gmean_rounded = lambda s_ups : round(gmean(s_ups), 2)
+
+            gmean_speedup = list(map(gmean_rounded, list(all_speedups.values())))
+            lowest_speedup_row = ['lowest_speedup', '1'] + list(lowest_speedup.values())
+            highest_speedup_row = ['highest_speedup', '1'] + list(highest_speedup.values())
+            gmean_speedup_row = ['gmean_speedup', '1'] + list(gmean_speedup)
+
+            writer.writerow(lowest_speedup_row)
+            writer.writerow(highest_speedup_row)
+            writer.writerow(gmean_speedup_row)
+
+            print(kernel)
+            print(lowest_speedup_row)
+            print(highest_speedup_row)
+            print(gmean_speedup_row)
+            print()
+
+            # Update for all kernels.
+            for i_q, q in enumerate(Q_SIZES):
+                # Need to init to first gmean for this to work.
+                if gmean_speedup_all_kernels[q] == -1:
+                    gmean_speedup_all_kernels[q] = gmean_speedup[i_q]
+
+                gmean_speedup_all_kernels[q] = gmean_rounded([gmean_speedup_all_kernels[q], 
+                                                               gmean_speedup[i_q]])
+                lowest_speedup_all_kernels[q] = min(lowest_speedup_all_kernels[q], lowest_speedup[q])
+                highest_speedup_all_kernels[q] = max(highest_speedup_all_kernels[q], highest_speedup[q])
+
+
+        # Emulation perf results are meaningless, delete.
+        if is_emu:
+            os.system(f'rm {res_file}')
+
+    
+    print('\nlowest_speedup over all kernels:')
+    for q, q_lowest in lowest_speedup_all_kernels.items():
+        print(f'{q}qsize : {q_lowest}')
+
+    print('\nhighest_speedup over all kernels:')
+    for q, q_highest in highest_speedup_all_kernels.items():
+        print(f'{q}qsize : {q_highest}')
+
+    print('\ngmean_speedup over all kernels:')
+    for q, q_gmean in gmean_speedup_all_kernels.items():
+        print(f'{q}qsize : {q_gmean}')
+    
+    print(f'\nResults saved to {res_file}')
 
 
     os.system(f'rm {TMP_FILE}')
