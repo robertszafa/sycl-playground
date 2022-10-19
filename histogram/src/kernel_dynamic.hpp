@@ -45,16 +45,18 @@ double histogram_kernel(queue &q, const std::vector<int> &h_feature, const std::
   using end_storeq_signal_pipe = pipe<class end_storeq_signal_pipe_class, int>;
 
   constexpr int kNumStoreOps = 1;
-  q.submit([&](handler &hnd) {
-    hnd.single_task<class LoadFeature>([=]() [[intel::kernel_args_restrict]] {
-      for (int i = 0; i < array_size; ++i) 
-        idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i*kNumStoreOps + 0});
-    });
-  });
+  // q.submit([&](handler &hnd) {
+  //   hnd.single_task<class LoadFeature>([=]() [[intel::kernel_args_restrict]] {
+  //     for (int i = 0; i < array_size; ++i) 
+  //       idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i*kNumStoreOps + 0});
+  //   });
+  // });
   q.submit([&](handler &hnd) {
     hnd.single_task<class LoadFeature2>([=]() [[intel::kernel_args_restrict]] {
-      for (int i = 0; i < array_size; ++i) 
+      for (int i = 0; i < array_size; ++i) {
+        idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i*kNumStoreOps + 0});
         idx_st_pipe::write({int(feature[i]), i*kNumStoreOps + 1});
+      }
     });
   });
 
@@ -76,7 +78,7 @@ double histogram_kernel(queue &q, const std::vector<int> &h_feature, const std::
   });
 
   StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe, 
-             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, device_ptr<int>(hist)).wait();
+             end_storeq_signal_pipe, Q_SIZE> (q, device_ptr<int>(hist)).wait();
 
   event.wait();
   q.copy(hist, h_hist.data(), h_hist.size()).wait();

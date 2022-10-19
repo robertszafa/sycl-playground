@@ -79,23 +79,23 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::v
   //   });
   // });
 
-  q.submit([&](handler &hnd) {
-    hnd.single_task<class LoadEdges2>([=]() [[intel::kernel_args_restrict]] {
-      int i = 0;
+  // q.submit([&](handler &hnd) {
+  //   hnd.single_task<class LoadEdges2>([=]() [[intel::kernel_args_restrict]] {
+  //     int i = 0;
 
-      while (i < num_edges) {
-        int j = i * 2;
+  //     while (i < num_edges) {
+  //       int j = i * 2;
 
-        int u = edges[j];
-        int v = edges[j + 1];
+  //       int u = edges[j];
+  //       int v = edges[j + 1];
 
-        u_load_pipe::write({u, i*kNumStoreOps});
-        v_load_pipe::write({v, i*kNumStoreOps});
+  //       u_load_pipe::write({u, i*kNumStoreOps});
+  //       v_load_pipe::write({v, i*kNumStoreOps});
 
-        i = i + 1;
-      }
-    });
-  });
+  //       i = i + 1;
+  //     }
+  //   });
+  // });
   
   // q.submit([&](handler &hnd) {
   //   hnd.single_task<class StoreIdxKernel2>([=]() [[intel::kernel_args_restrict]] {
@@ -132,7 +132,7 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::v
 
   
   StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe, 
-             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, device_ptr<int>(vertices));
+             end_storeq_signal_pipe, Q_SIZE> (q, device_ptr<int>(vertices));
 
 
   // q.submit([&](handler &hnd) {
@@ -192,6 +192,9 @@ double maximal_matching_kernel(queue &q, const std::vector<int> &h_edges, std::v
 
         int u = edges[j];
         int v = edges[j + 1];
+
+        u_load_pipe::write({u, i*kNumStoreOps});
+        v_load_pipe::write({v, i*kNumStoreOps});
         
         auto vertex_u = vertex_u_pipe::read();
         auto vertex_v = vertex_v_pipe::read();

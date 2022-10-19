@@ -68,7 +68,7 @@ double get_tanh_kernel(queue &q, std::vector<int> &h_A, const std::vector<int> h
 
 
   StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe, 
-             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, device_ptr<int>(A));
+             end_storeq_signal_pipe, Q_SIZE> (q, device_ptr<int>(A));
 
 
   auto event = q.submit([&](handler &hnd) {

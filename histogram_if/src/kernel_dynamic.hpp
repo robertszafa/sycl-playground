@@ -69,7 +69,7 @@ double histogram_if_kernel(queue &q, const std::vector<int> &h_feature,
   });
 
   StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe, 
-             end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12> (q, device_ptr<int>(hist));
+             end_storeq_signal_pipe, Q_SIZE> (q, device_ptr<int>(hist));
 
   // q.submit([&](handler &hnd) {
   //   hnd.single_task<class ActualCalc>([=]() [[intel::kernel_args_restrict]] {
