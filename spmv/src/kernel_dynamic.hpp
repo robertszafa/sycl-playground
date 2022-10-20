@@ -103,7 +103,7 @@ double spmv_kernel(queue &q, std::vector<float> &h_matrix, const std::vector<int
   });
 
   auto storeqEvent = StoreQueue<idx_ld_pipes, val_ld_pipes, kNumLdPipes, idx_st_pipe, val_st_pipe,
-                                end_storeq_signal_pipe, IS_FORWARDING_Q, Q_SIZE, 12>(q, device_ptr<float>(matrix));
+                                end_storeq_signal_pipe, Q_SIZE>(q, device_ptr<float>(matrix));
 
   auto event = q.submit([&](sycl::handler &h) {
     h.single_task<class spmv_dynamic>([=]() [[intel::kernel_args_restrict]] {
