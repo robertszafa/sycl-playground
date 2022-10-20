@@ -46,22 +46,15 @@ double get_tanh_kernel(queue &q, std::vector<int> &h_A, const std::vector<int> h
   using idx_st_pipe = pipe<class idx_st_pipe_class, pair_t, 64>;
   using val_st_pipe = pipe<class val_st_pipe_class, int, 64>;
 
-
-  constexpr int kNumStoreOps = 1;
-  q.submit([&](handler &hnd) {
-    hnd.single_task<class LoadIdxLd>([=]() [[intel::kernel_args_restrict]] {
-      for (int i = 0; i < array_size; i++) {
-        int ld_i = addr_in[i];
-        idx_ld_pipes::PipeAt<0>::write({ld_i, i*kNumStoreOps + 0});
-      }
-    });
-  });
-
   q.submit([&](handler &hnd) {
     hnd.single_task<class LoadIdxSt>([=]() [[intel::kernel_args_restrict]] {
+      int tag = 0;
       for (int i = 0; i < array_size; i++) {
+        int ld_i = addr_in[i];
         int st_i = addr_out[i];
-        idx_st_pipe::write({st_i, i*kNumStoreOps + 1});
+        idx_ld_pipes::PipeAt<0>::write({ld_i, tag});
+        tag++;
+        idx_st_pipe::write({st_i, tag});
       }
     });
   });

@@ -50,20 +50,16 @@ double histogram_if_kernel(queue &q, const std::vector<int> &h_feature,
   using calc_predicate_pipe = pipe<class calc_predicate_pipe_class, bool, 64>;
   using end_storeq_signal_pipe = pipe<class end_signal_pipe_class, int>;
 
-  constexpr int kNumStoreOps = 1;
-  q.submit([&](handler &hnd) {
-    hnd.single_task<class LoadFeature>([=]() [[intel::kernel_args_restrict]] {
-      for (int i = 0; i < array_size; ++i) {
-        idx_ld_pipes::PipeAt<0>::write({int(feature[i]), i*kNumStoreOps + 0});
-      }
-    });
-  });
   q.submit([&](handler &hnd) {
     hnd.single_task<class LoadFeature2>([=]() [[intel::kernel_args_restrict]] {
+      int tag = 0;
       for (int i = 0; i < array_size; ++i) {
         auto wt = weight[i];
-        auto idx = (wt > 0) ? int(feature[i]) : -1;
-        idx_st_pipe::write({idx, i*kNumStoreOps + 1});
+        if (wt > 0) {
+          idx_ld_pipes::PipeAt<0>::write({int(feature[i]), tag});
+          tag++;
+          idx_st_pipe::write({int(feature[i]), tag});
+        }
       }
     });
   });
@@ -85,9 +81,9 @@ double histogram_if_kernel(queue &q, const std::vector<int> &h_feature,
       int total_req_stores = 0;
       for (int i = 0; i < array_size; ++i) {
         auto wt = weight[i];
-        int hist = val_ld_pipes::PipeAt<0>::read();
 
         if (wt > 0) {
+          int hist = val_ld_pipes::PipeAt<0>::read();
           // calc_predicate_pipe::write(1);
           // hist_load_3_pipe::write(hist);
           // weight_load_3_pipe::write(wt);

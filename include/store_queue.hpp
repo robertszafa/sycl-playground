@@ -188,14 +188,9 @@ event StoreQueue(queue &q, device_ptr<value_t> data) {
             int idx_store = idx_tag_pair_store.first;
             tag_store = idx_tag_pair_store.second;
 
-            // A "-1" address means that the corresponding store is control dependent and the cond
-            // was not sarisfied on this iter. We update the tag_store, so that loads can proceed.
-            if (idx_store != -1) {
-              store_entries[stq_head] = {idx_store, tag_store, true};
-
-              i_store_idx++;
-              stq_head = (stq_head+1) % QUEUE_SIZE;
-            }
+            store_entries[stq_head] = {idx_store, tag_store, true};
+            stq_head = (stq_head+1) % QUEUE_SIZE;
+            i_store_idx++;
           }
         }
 
