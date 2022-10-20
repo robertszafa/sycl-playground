@@ -101,7 +101,7 @@ if __name__ == '__main__':
 
         with open(res_file, 'w') as f:
             writer = csv.writer(f)
-            writer.writerow(['percentage', 'static'] + [f'dynamic_{q}qsize)' for q in Q_SIZES])
+            writer.writerow(['percentage', 'static'] + [f'dynamic_{q}qsize' for q in Q_SIZES])
 
             # Record lowest-highest speedup against static across all % for each q_size.
             lowest_speedup = {q : 100000 for q in Q_SIZES}
