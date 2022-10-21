@@ -13,7 +13,7 @@ SRC := src/main.cpp
 HDR := src/kernel_$(KERNEL).hpp
 BIN := bin/data_hazard_$(KERNEL)_ivdep
 
-.PHONY: host fpga_emu fpga 
+.PHONY: host fpga_emu fpga_hw
 
 all: host
 host: $(BIN)

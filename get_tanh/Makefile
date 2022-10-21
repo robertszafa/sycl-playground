@@ -42,7 +42,7 @@ SIMULATION_FLAGS := -Xssimulation -DFPGA=1
 # SIMULATION_FLAGS += -reuse-exe=$(BIN).fpga_sim
 
 
-.PHONY: host fpga_emu fpga 
+.PHONY: host fpga_emu fpga_hw
 
 all: host
 host: $(BIN)

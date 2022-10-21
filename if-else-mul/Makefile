@@ -22,7 +22,7 @@ SIMULATION_FLAGS := -Xssimulation -DFPGA=1
 # -Xssfc-exit-fifo-type=zero-latency
 
 
-.PHONY: host fpga_emu fpga 
+.PHONY: host fpga_emu fpga_hw
 
 all: host
 host: $(BIN)
